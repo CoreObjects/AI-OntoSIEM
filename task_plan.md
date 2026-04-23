@@ -208,12 +208,16 @@ AI-OntoSIEM/
 - ⏸️ 双触发（周度定时 + 信号阈值即时）：当前是手动 `scripts/run_proposals.py`；定时可 cron 挂载
 - ✅ 25 新测试（累计 192/192）
 
-### 组件 9：演化审核 UI（2 天）
-- Streamlit 页签，每个提议卡片：类型 / 名称 / 语义定义 / 证据 / 冲突 / 影响 / ATT&CK
-- 四级决策：通过 / 拒绝 / 修改后通过 / 延后（最多 2 周期）
-- 通过 → 生成新本体 YAML + 递增版本 + 触发事件
-- 拒绝 → 理由入反面样本库
-- 积压告警：> 10 条红色提示，> 20 条暂停新提议
+### 组件 9：演化审核 UI（2 天）✅ 完成（会话 9）
+- ✅ Streamlit 页 `ui/evolution_review.py`：提议卡片含类型 / 语义 / ATT&CK / 重叠度条形图 / 证据展开
+- ✅ 四级决策动作 `evolution/review_actions.py`：approve_and_upgrade / reject / defer / modify_and_upgrade
+- ✅ OntologyUpgrader `evolution/ontology_upgrader.py`：approved → 新 YAML（版本 +0.1）+ 订阅回调
+  - 支持 node / edge / attr 三种升级；合并 attack_anchors；写 evolution_history 审计
+- ✅ rejected → 反面样本库（`proposal_store.rejection_names()` 供 ProposalEngine 闭环）
+- ✅ deferred 最多 2 周期，超限自动转 rejected（需求 R6 膨胀防控）
+- ✅ 积压告警：>10 yellow / >20 red + pause_new_proposals 标志
+- ✅ UI 与业务逻辑完全分离（actions 走 TDD，UI 仅薄按钮层）
+- ✅ 23 新测试（累计 215/215）
 
 ### 组件 10：变更传播 + Parser 自动生成 + 回放验证（5 天 · **高风险组件**）
 - 变更广播：发布 `ontology.version.upgraded` 事件

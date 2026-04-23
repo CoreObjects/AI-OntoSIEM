@@ -4,6 +4,58 @@
 
 ---
 
+## 2026-04-23 · 会话 9：阶段 3 · 组件 9 演化审核 UI（四级决策 + 本体版本升级）
+
+### 目标
+完成组件 9（2 天）。审核员点按钮通过 ScheduledTask → 生成新本体 YAML → 订阅者自动响应。
+
+### 完成
+- ✅ **OntologyUpgrader** `evolution/ontology_upgrader.py`
+  - approved Proposal → 新 YAML + 版本 +0.1（v1.0 → v1.1 → v1.2...）
+  - 支持 node / edge / attr 三种类型的本体升级
+  - 边升级要求 endpoint hints；attr 升级要求 target_node
+  - 合并 attack_mapping 到 attack_anchors（去重）
+  - 写入 `evolution_history` 审计字段
+  - 触发 `OntologyService.reload()` 让 GraphStore / Parser / JudgmentEngine 订阅回调
+  - 硬约束：拒绝 non-approved / 重复 / 端点不存在
+- ✅ **四级决策动作** `evolution/review_actions.py`
+  - `approve_and_upgrade` → 调 upgrader + mark_approved
+  - `reject` → mark_rejected + reason 入反面样本库
+  - `defer` → 最多 2 周期，超限**自动 reject**
+  - `modify_and_upgrade` → 改 name / definition 后通过
+  - `backlog_status` → green/yellow/red 三档，红色时 `pause_new_proposals=True`
+- ✅ **ProposalStore 扩展**：加 `defer_count` 列 + `increment_defer` + `get` + `as_proposal`
+- ✅ **Streamlit UI** `ui/evolution_review.py`
+  - 顶部 4 个指标：本体版本 / 节点数 / 边数 / 待审核数
+  - 积压告警条（黄 >10 / 红 >20）
+  - 每条 pending 提议卡片：类型 / 名称 / 语义定义 / ATT&CK / 重叠度（带条形图）/ 来源信号 / 证据展开
+  - 四个决策按钮：✅通过 / ✏️修改后通过 / ❌拒绝 / ⏳延后（带计数 0/2）
+  - 历史记录分类展开：approved / modified / rejected / deferred
+
+### 测试统计
+215/215 全绿（之前 192 + 组件 9 新增 23）
+- `test_ontology_upgrader.py` 13（版本递增 + node/edge/attr 升级 + 拒绝约束 + reload 回调）
+- `test_review_actions.py` 8（四级决策 + 延后计数 + 积压告警三档）
+- `test_ui_evolution_review.py` 2（smoke：import + 导出符号存在）
+
+### 关键发现
+- **UI 与业务逻辑完全分离**：所有状态变化通过 `review_actions` 函数，Streamlit 仅是 "按钮 → 函数" 薄层。便于后续换 CLI / Gradio / API 触发。
+- **演化链式升级**：v1.0 + 节点 ScheduledTask → v1.1；v1.1 + 边 schedules (Host→ScheduledTask) → v1.2。测试 `test_multi_step_upgrade_node_then_edge` 覆盖。
+- **defer 超周期自动转 reject** 是需求 R6 风险缓解（本体膨胀失控）：延后队列不会无限积压。
+- **积压红线 (>20)** 会暂停新提议触发：`backlog_status(store)["pause_new_proposals"]` 可挡 `run_proposals.py` 的调用。
+- **UI smoke test 策略**：只测 `import + 导出符号存在`，交互流程靠 actions 层覆盖。Streamlit runtime 下的按钮行为靠 `streamlit run` 人工验收。
+
+### 下一阶段（阶段 3 最后也是最硬一关）
+- 组件 10 变更传播 + Parser 自动生成 + 回放验证（5 天，**全项目最高风险**）
+  - LLM 基于新通过的提议 + 异常池事件样本 → 生成新 parser YAML 映射（非代码）
+  - anomaly_pool 回放：应用新 parser → 成功的事件追溯入图（backfilled=true）
+  - 图谱层：新增节点/边类型 → 历史回填
+  - 认知层：prompt 注入新概念 → 重推 semantic_gap 告警
+  - 对比报告：异常池规模 / 研判准确率 / 证据引用数 diff
+  - 指标恶化 → 回滚提议
+
+---
+
 ## 2026-04-23 · 会话 8：阶段 3 起手 — 组件 8 本体演化提议引擎（Demo 主故事线素材落地）
 
 ### 目标
