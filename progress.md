@@ -4,6 +4,46 @@
 
 ---
 
+## 2026-04-23 · 会话 7：阶段 2 收官 — 组件 7 信号中枢完整版（Week 2 末里程碑达成）
+
+### 目标
+完成组件 7 收尾阶段 2，实现 Week 2 末「端到端主路径通」里程碑。
+
+### 完成
+- ✅ **signal_hub 完整版 API** `evolution/signal_hub.py`
+  - `list_aggregations(window_hours, min_count)` 按 aggregation_key 分组 + 计数 + first/last_seen + priority + processed 标记
+  - `list_pending(window_hours, threshold)` 过滤窗口内超阈值且未处理的组
+  - `list_by_priority(hot/warm/cold, limit)` 冷热分级查询
+  - `count_by_priority()` 三档计数
+  - `mark_processed(aggregation_key)` 演化机制消费后标记（返回影响行数）
+  - schema 扩 `processed_at` 列 + `ALTER TABLE IF NOT EXISTS` 兼容旧 DB
+- ✅ **终端看板入口** `scripts/inspect_signals.py`
+  - 总计 / 按 priority / 按 signal_type / 聚合热力图 / 待处理队列
+  - Windows 终端 UTF-8 强制（`sys.stdout.reconfigure`）
+- ✅ **端到端真实信号库扫描**（data/signals.duckdb 当前 43 信号）
+  - `hot 32 + warm 11`
+  - **待处理 1 组**：`data:unparseable_event:4698` × 22（Demo §8 主故事线触发器 ⭐）
+  - 其他聚合：4702×8 / 5140/5145 各 1 / 5 种 semantic_gap（LLM 自发）
+
+### 测试统计
+167/167 全绿（之前 154 + 组件 7 新增 13）
+- `test_signal_hub.py` 13（聚合分组 + 窗口过滤 + min_count 阈值 + priority 分级 + mark_processed + 向后兼容老 DB）
+
+### 关键发现
+- **LLM 自发的 semantic_gap 信号比想象中犀利**：本次端到端 Qwen 调用产出了 5 种 gap 提议 —— `NetworkEndpoint`（本体里已有，误报 5 次）/ `Process`（本体已有，误报 3 次）/ `Thread, RemoteThreadOperation`（**本体真缺**）/ `NetworkConnection`（**本体真缺**）/ `AuthenticationContext`（**本体真缺**）。后三个可直接喂阶段 3 提议引擎。
+- **前二误报**是子图工程裁剪的副作用 —— LLM 把"子图里没看到"当成"本体里没有"。system prompt 已有警示但 Qwen 仍会混淆。演化阶段会通过"重叠度检查"自动拒掉这类幻觉提议（需求文档 §4.8 硬边界 3）。
+- **待处理阈值设在 10 合理**：4698 单组 22 条，稳稳触发 Demo 主故事线；其他组 ≤8 维持静默，不干扰叙事。
+- **Week 2 末里程碑达成** ✓ 端到端主路径全通：
+  `events → parser → graph → sigma → alert → judgment(LLM) → signal_hub → 阶段 3 消费入口`
+
+### 下一阶段
+- **阶段 3 演化闭环**（Week 3 · ~10 天）
+  - 组件 8 本体演化提议引擎（3 天）：LLM 输入 signal_hub pending + 当前本体 + 历史拒绝记录 → 提议 JSON，硬边界 + 重叠度双闸
+  - 组件 9 演化审核 UI（2 天）：Streamlit 提议卡片 + 四级决策
+  - 组件 10 变更传播 + Parser 自动生成 + 回放验证（5 天，高风险）：ontology v1.0 → v1.1 → parser YAML 生成 → anomaly_pool 回放
+
+---
+
 ## 2026-04-23 · 会话 6：阶段 2 · 组件 6 认知推理层完整版（高风险 · 真调 Qwen 跑通）
 
 ### 目标

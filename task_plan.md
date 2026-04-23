@@ -41,7 +41,7 @@
 |------|------|--------|----------|--------|------|
 | **阶段 0** | 需求理解、技术栈准备、仓库骨架 | 0.5 天 | — | 规划完成 | ✅ 完成 |
 | **阶段 1** | 基础设施层：数据 + 本体 + 解析器 | ~7 天 | 组件 1/2/3 + LLM 客户端 | Week 1 末「最小链路通」 | ✅ 完成 |
-| **阶段 2** | 检测 + 图谱 + 认知研判 + 信号中枢 | ~12 天 | 组件 4/5/6/7 | Week 2 末「端到端主路径通」 | 🔄 进行中（组件 4+5+6 完成，仅剩 7） |
+| **阶段 2** | 检测 + 图谱 + 认知研判 + 信号中枢 | ~12 天 | 组件 4/5/6/7 | Week 2 末「端到端主路径通」 | ✅ 完成（Week 2 里程碑达成） |
 | **阶段 3** | 演化闭环：提议 + 审核 + Parser 生成 + 回放 | ~10 天 | 组件 8/9/10 | Week 3 末「演化闭环通」 | ⏳ 待开始 |
 | **阶段 4** | UI 集成 + 评测看板 + Docker + Demo 录屏 | ~3 天 | 组件 11 + 交付物 | Week 4 末「完整交付」 | ⏳ 待开始 |
 
@@ -179,12 +179,15 @@ AI-OntoSIEM/
 - ✅ 端到端真调 Qwen：10 告警 → 10 研判（1 malicious + 9 suspicious），65K tokens
 - ✅ 22 新测试全绿（累计 154/154）
 
-### 组件 7：演化信号中枢（2 天）
-- 统一 API：`report_signal(source_layer, signal_type, payload)`
-- 按 `source_layer + signal_type` 分类存储
-- 聚合策略：24h 同类型 > 20 条 → 标记"待处理"
-- 冷热分级：热（即时）/ 温（批次）/ 冷（周度）
-- 信号热力图看板入口
+### 组件 7：演化信号中枢（2 天）✅ 完成（会话 7）
+- ✅ 统一 API `report_signal` 已在会话 3 做完（6 种 signal_type + 3 种 priority）
+- ✅ 按 `source_layer + signal_type` 分类存储（aggregation_key）
+- ✅ 聚合查询 `list_aggregations(window_hours, min_count)` + `list_pending(threshold)`
+- ✅ 冷热分级 `list_by_priority(hot/warm/cold)` + `count_by_priority()`
+- ✅ 消费标记 `mark_processed(aggregation_key)` — 阶段 3 演化消费入口
+- ✅ schema 扩 `processed_at` 列 + 向后兼容旧 DB
+- ✅ 终端看板 `scripts/inspect_signals.py`（UI 版看板留阶段 4）
+- ✅ 13 新测试（累计 167/167）
 
 ---
 

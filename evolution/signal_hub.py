@@ -12,7 +12,7 @@ import logging
 import threading
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -88,9 +88,17 @@ class SignalHub:
                 priority         VARCHAR,
                 payload          JSON,
                 aggregation_key  VARCHAR,
-                ontology_version VARCHAR
+                ontology_version VARCHAR,
+                processed_at     TIMESTAMP
             )
         """)
+        # 向后兼容：老 DB 可能没 processed_at 列
+        try:
+            self._con.execute(
+                "ALTER TABLE signals ADD COLUMN processed_at TIMESTAMP"
+            )
+        except duckdb.CatalogException:
+            pass  # 列已存在
 
     def report_signal(
         self,
@@ -163,6 +171,121 @@ class SignalHub:
             }
             for r in rows
         ]
+
+    # -------- 聚合 / 分级 / 待处理 / 消费标记（组件 7 完整版）--------
+
+    def list_aggregations(
+        self,
+        *,
+        window_hours: Optional[int] = None,
+        min_count: int = 1,
+    ) -> List[Dict[str, Any]]:
+        """按 aggregation_key 分组返回聚合视图。
+
+        字段：aggregation_key / count / first_seen / last_seen /
+             source_layer / signal_type / priority / processed(bool)
+        processed=True 表示该组所有行都已被 mark_processed。
+        """
+        where_clause = ""
+        params: List[Any] = []
+        if window_hours is not None:
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=window_hours)
+            where_clause = "WHERE timestamp >= ?"
+            params.append(cutoff)
+
+        sql = f"""
+            SELECT
+                aggregation_key,
+                COUNT(*) AS cnt,
+                MIN(timestamp) AS first_seen,
+                MAX(timestamp) AS last_seen,
+                ANY_VALUE(source_layer) AS source_layer,
+                ANY_VALUE(signal_type) AS signal_type,
+                ANY_VALUE(priority) AS priority,
+                SUM(CASE WHEN processed_at IS NULL THEN 1 ELSE 0 END) AS unprocessed_cnt
+            FROM signals
+            {where_clause}
+            GROUP BY aggregation_key
+            HAVING COUNT(*) >= ?
+            ORDER BY cnt DESC, last_seen DESC
+        """
+        params.append(min_count)
+
+        with self._lock:
+            rows = self._con.execute(sql, params).fetchall()
+        return [
+            {
+                "aggregation_key": r[0],
+                "count": int(r[1]),
+                "first_seen": str(r[2]),
+                "last_seen": str(r[3]),
+                "source_layer": r[4],
+                "signal_type": r[5],
+                "priority": r[6],
+                "processed": int(r[7]) == 0,
+            }
+            for r in rows
+        ]
+
+    def list_pending(
+        self,
+        *,
+        window_hours: int = 24,
+        threshold: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """窗口内 >= threshold 且尚未处理的聚合组。"""
+        groups = self.list_aggregations(window_hours=window_hours, min_count=threshold)
+        return [g for g in groups if not g["processed"]]
+
+    def list_by_priority(self, priority: str, *, limit: int = 50) -> List[Dict[str, Any]]:
+        if priority not in PRIORITIES:
+            raise ValueError(f"Unknown priority: {priority}")
+        with self._lock:
+            rows = self._con.execute(
+                "SELECT signal_id, timestamp, source_layer, signal_type, priority, "
+                "payload, aggregation_key, ontology_version, processed_at "
+                "FROM signals WHERE priority = ? ORDER BY timestamp DESC LIMIT ?",
+                [priority, limit],
+            ).fetchall()
+        return [
+            {
+                "signal_id": r[0],
+                "timestamp": str(r[1]),
+                "source_layer": r[2],
+                "signal_type": r[3],
+                "priority": r[4],
+                "payload": json.loads(r[5]) if isinstance(r[5], str) else r[5],
+                "aggregation_key": r[6],
+                "ontology_version": r[7],
+                "processed_at": str(r[8]) if r[8] is not None else None,
+            }
+            for r in rows
+        ]
+
+    def count_by_priority(self) -> Dict[str, int]:
+        with self._lock:
+            rows = self._con.execute(
+                "SELECT priority, COUNT(*) FROM signals GROUP BY priority"
+            ).fetchall()
+        return {r[0]: int(r[1]) for r in rows}
+
+    def mark_processed(self, aggregation_key: str) -> int:
+        """把该聚合组内所有未处理的信号标为已处理。返回被标记的行数。"""
+        now = datetime.now(timezone.utc)
+        with self._lock:
+            n = self._con.execute(
+                "SELECT COUNT(*) FROM signals "
+                "WHERE aggregation_key = ? AND processed_at IS NULL",
+                [aggregation_key],
+            ).fetchone()[0]
+            if n == 0:
+                return 0
+            self._con.execute(
+                "UPDATE signals SET processed_at = ? "
+                "WHERE aggregation_key = ? AND processed_at IS NULL",
+                [now, aggregation_key],
+            )
+        return int(n)
 
     def clear(self) -> None:
         with self._lock:
