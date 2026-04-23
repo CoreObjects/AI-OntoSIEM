@@ -1,0 +1,56 @@
+# ===== CMDB / IAM 声明源 =====
+# User 节点 + owns 边只能从这里来（本体 v1.0 硬约束）
+# 加载器：graph/cmdb_loader.py
+# 加载时机：在日志实体导入图之后（确保 owns 的 Account 端已存在）
+
+source: "cmdb"
+version: "1.0"
+declared_at: "2026-04-22T00:00:00Z"
+description: "初始 CMDB 导入，与 docs/attack_scenarios.md §2.1 对齐"
+
+users:
+  - user_id: "u1001"
+    display_name: "Alice Chen"
+    department: "Finance"
+    role: "accountant"
+    email: "alice@corp.example"
+    accounts:
+      - sid: "S-1-5-21-1000000000-1000000000-1000000000-1001"
+
+  - user_id: "u1002"
+    display_name: "Bob Martinez"
+    department: "IT"
+    role: "sysadmin"
+    email: "bob@corp.example"
+    accounts:
+      - sid: "S-1-5-21-1000000000-1000000000-1000000000-1002"
+
+  - user_id: "u1003"
+    display_name: "Carol Wu"
+    department: "Finance"
+    role: "finance_director"
+    email: "carol@corp.example"
+    accounts:
+      - sid: "S-1-5-21-1000000000-1000000000-1000000000-1003"
+
+  - user_id: "u1004"
+    display_name: "David Kim"
+    department: "Engineering"
+    role: "backend_engineer"
+    email: "david@corp.example"
+    accounts:
+      - sid: "S-1-5-21-1000000000-1000000000-1000000000-1004"
+
+  - user_id: "u2001"
+    display_name: "svc_backup (service account)"
+    department: "-"
+    role: "service_account"
+    accounts:
+      - sid: "S-1-5-21-1000000000-1000000000-1000000000-2001"
+
+  - user_id: "u2002"
+    display_name: "svc_sccm (service account)"
+    department: "-"
+    role: "service_account"
+    accounts:
+      - sid: "S-1-5-21-1000000000-1000000000-1000000000-2002"

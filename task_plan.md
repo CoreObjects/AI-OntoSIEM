@@ -41,7 +41,7 @@
 |------|------|--------|----------|--------|------|
 | **阶段 0** | 需求理解、技术栈准备、仓库骨架 | 0.5 天 | — | 规划完成 | ✅ 完成 |
 | **阶段 1** | 基础设施层：数据 + 本体 + 解析器 | ~7 天 | 组件 1/2/3 + LLM 客户端 | Week 1 末「最小链路通」 | ✅ 完成 |
-| **阶段 2** | 检测 + 图谱 + 认知研判 + 信号中枢 | ~12 天 | 组件 4/5/6/7 | Week 2 末「端到端主路径通」 | 🔄 进行中（组件 4 完成） |
+| **阶段 2** | 检测 + 图谱 + 认知研判 + 信号中枢 | ~12 天 | 组件 4/5/6/7 | Week 2 末「端到端主路径通」 | 🔄 进行中（组件 4+5 完成，剩 6+7） |
 | **阶段 3** | 演化闭环：提议 + 审核 + Parser 生成 + 回放 | ~10 天 | 组件 8/9/10 | Week 3 末「演化闭环通」 | ⏳ 待开始 |
 | **阶段 4** | UI 集成 + 评测看板 + Docker + Demo 录屏 | ~3 天 | 组件 11 + 交付物 | Week 4 末「完整交付」 | ⏳ 待开始 |
 
@@ -158,14 +158,16 @@ AI-OntoSIEM/
 - ✅ 端到端跑批：2329 事件 → 10 告警，零误报 零 schema_mismatch
 - ✅ 34 测试全绿
 
-### 组件 5：知识图谱层（4 天 · **高风险组件**）
-- NetworkX 建图（避 Neo4j 部署成本）
-- 实体消歧分层：强匹配（SID）→ 中匹配（domain\username）→ 弱匹配（观察区）
-- User 只来自 CMDB/IAM，Account 只来自日志，**owns 不自动推断**
-- 关系时效性：owns 永久 · auth 90d · logged_in 30d 滑窗 · spawned 永久 · connected 7d
-- 订阅本体变更：版本升级 → 新增类型 → 历史回填
-- pyvis HTML 可视化
-- **降级预案**：若超期，退化为纯 SID 匹配 + 不做弱匹配
+### 组件 5：知识图谱层（4 天 · **高风险组件**）✅ 完成（会话 5）
+- ✅ NetworkX MultiDiGraph + 实体合并 upsert 语义
+- ✅ 实体消歧三级：SID(strong) / DOMAIN\\user(medium) / ?\\user(weak)
+- ✅ 硬约束（初始化时锁死）：User 仅 cmdb/iam；owns 边仅 declared 源 → HardConstraintViolation
+- ✅ 关系时效性：owns none / auth 90d / logged_into 30d_sliding / connected_to 7d；`out_edges(valid_at=now)` 过滤
+- ✅ 本体变更订阅 `subscribe_to_ontology(svc, backfill_fn)`：升级时自动算新增类型 diff + 触发回填钩子（阶段 3 注入真实 backfill）
+- ✅ CMDB 加载器 + `ontology/cmdb.yaml`：6 User + 6 owns 边声明源
+- ✅ pyvis HTML 可视化（全图 + 子图聚焦）
+- ✅ 端到端：6134 entities→3553 nodes，4036 relations→3574 edges
+- ✅ 57 新测试全绿（累计 132/132）
 
 ### 组件 6：认知推理层（4 天 · **高风险组件**）
 - 输入：一条告警 + 1-2 跳图谱子图

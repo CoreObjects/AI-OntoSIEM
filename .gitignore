@@ -27,7 +27,7 @@ data/raw/
 data/cache/
 data/replay_reports/
 graph/graph.pickle
-graph/visualization.html
+graph/*.html
 
 # BOTSv3 原始数据（大文件）
 datasets/

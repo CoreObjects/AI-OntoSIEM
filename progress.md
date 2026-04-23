@@ -4,6 +4,67 @@
 
 ---
 
+## 2026-04-22 · 会话 5：阶段 2 · 组件 5 知识图谱层完成（高风险模块一次会话攻克）
+
+### 目标
+攻克阶段 2 最高风险组件（原计划 4 天）。严格 TDD。
+
+### 完成
+- ✅ **GraphStore** `graph/store.py`：NetworkX MultiDiGraph 封装
+  - 节点/边 upsert 语义（同主键合并，非重复）
+  - 元字段维护：first_seen（min）/ last_seen（max）/ confidence（max）/ source / ontology_version
+  - 硬约束（初始化时锁死）：User 仅限 cmdb/iam；owns 边仅限 declared 源，`HardConstraintViolation` 异常
+  - 查询 API：`list_nodes_by_type / out_edges / in_edges / subgraph_around(depth) / get_node`
+  - 本体变更订阅 `subscribe_to_ontology(svc, backfill_fn=...)`：升级时计算新增节点/边类型，调用 backfill_fn（阶段 3 演化闭环入口）
+- ✅ **EntityResolver** `graph/entity_resolver.py`：三级消歧
+  - Account：SID (strong 1.0) / `{DOMAIN}\\{user}` (medium 0.8) / `?\\{user}` (weak 0.5)
+  - Host：hostname (strong) / FQDN 推短名 (medium)
+  - Process：复合键 `{host}::{basename}::{pid}::{start_time}` (strong) / 无 start_time (medium)
+  - 过滤 Anonymous SID（S-1-0-0 / S-1-5-7）回退到中匹配
+- ✅ **TimeDecay** `graph/time_decay.py`：关系时效规约解析
+  - 语法：`none` / `<N>d`（绝对 TTL）/ `<N>d_sliding`（滑动窗口）
+  - 默认映射与 ontology v1.0 time_decay 字段对齐（owns none / authenticated_as 90d / logged_into 30d_sliding / connected_to 7d）
+  - `out_edges(valid_at=now)` 过滤过期边
+- ✅ **Importer** `graph/importer.py`：`parsed_events.duckdb` → GraphStore
+  - 所有节点都过 resolver 规范化（修复 parser 对同一账户用两种 id_expr 产生重复节点的问题）
+  - 关系端点按 canonical_id 翻译
+  - 关系端点缺失时 skip 并计数（不 crash）
+- ✅ **CMDB Loader** `graph/cmdb_loader.py` + `ontology/cmdb.yaml`：User+owns 唯一入口
+  - 6 个 User（u1001 Alice / u1002 Bob / u1003 Carol / u1004 David / u2001 svc_backup / u2002 svc_sccm）
+  - 声明 Account 在图里不存在时 skip owns（避免悬空边）
+  - 重复加载幂等
+- ✅ **Visualizer** `graph/visualizer.py`：pyvis HTML 渲染
+  - 节点颜色按 type 分（User 棕 / Account 蓝 / Host 绿 / Process 红 / NetworkEndpoint 紫）
+  - Hover tooltip 显示 attrs + meta
+  - 支持全图 或 `center + depth` 聚焦子图
+- ✅ **端到端 `scripts/build_graph.py`**
+  - 6134 entities → **3553 节点**（User 6 / Account 10 / Host 6 / Process 3537）
+  - 4036 relations → **3574 边**（去重率 ~12%）
+  - 6 条 owns 声明边落地
+  - 生成两个 HTML：`graph/visualization.html`（全图 3.1MB）+ `graph/visualization_attack.html`（FIN-SRV-01 2 跳 346KB）
+
+### 测试统计
+132/132 全绿（之前的 75 + 组件 5 新增 57）
+- `test_graph_store.py` 23（节点/边 + 硬约束 + 查询 + 订阅）
+- `test_entity_resolver.py` 11（三级消歧）
+- `test_time_decay.py` 10（解析 + 判定 + store 集成）
+- `test_graph_importer.py` 7（含对真实 parsed_events.duckdb 的集成 smoke）
+- `test_cmdb_loader.py` 4（User 创建 + owns 落地 + 幂等）
+- `test_graph_visualizer.py` 2（HTML 渲染 smoke + 子图作用域）
+
+### 关键发现
+- **parser 对同一 Account 用两种 id_expr**：有 SID 的事件里 `node_id = SID`；没 SID 的事件里 `node_id = TargetUserName`。graph importer 层用 resolver 做二次规范化解决，parser 保持不动（契约不破）。
+- **weak 观察区**：alice 同时以 `S-1-5-21-...1001`（strong）和 `CORP\\alice`（medium）两种形式存在。这是设计里的"观察区" — 阶段 3 靠演化提议自动合并，或人工决策。MVP 不强合并。
+- **本体变更订阅的降级设计**：`backfill_fn` 是可选参数，阶段 2 不提供时 store 会默默更新 ontology_version 但不触发回填。阶段 3 注入真正的 backfill 实现（从 anomaly_pool 取出事件 + 跑新版 parser + 灌入图）。
+- **Process 节点数仍 3537（从 3560 降一点）**：因为每个进程有 pid+start_time，绝大多数是唯一的，消歧合并空间小。后续若加"父子进程关系链"可再降。
+- **HTML 全图 3.1MB + 3553 节点 pyvis 渲染略慢**：Demo 用聚焦子图（attack 346KB）更合适。
+
+### 下一阶段（阶段 2 剩余）
+- 组件 6 认知推理层完整版（4 天，高风险）：judgment_engine 调 llm_client + 图子图输入 + evidence_refs 强制校验 + semantic_gap 信号
+- 组件 7 信号中枢完整版（2 天）：聚合 + 冷热分级 + 看板入口
+
+---
+
 ## 2026-04-22 · 会话 4：阶段 2 启动 — 组件 4 Sigma 规则集完成
 
 ### 目标
