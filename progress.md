@@ -4,6 +4,50 @@
 
 ---
 
+## 2026-04-23 · 会话 8：阶段 3 起手 — 组件 8 本体演化提议引擎（Demo 主故事线素材落地）
+
+### 目标
+进入阶段 3 演化闭环，完成组件 8（原计划 3 天）。真调 Qwen 产出第一批真实提议，验证 §8 Demo 主故事线可走通。
+
+### 完成
+- ✅ **Proposal dataclass + ProposalEngine** `evolution/proposer.py`
+  - 输入：signal_hub.list_pending() + 当前本体 + rejection_names（反面样本库）
+  - 四重闸门：
+    1. system prompt 硬边界（只能新增 / ≥3 证据 / overlap_analysis 必填 / ≤5 个）
+    2. 硬边界代码校验（防 LLM 违约）
+    3. 重叠度闸 > 0.7 自动丢弃
+    4. 字符串相似度闸（与本体 / 反面样本库 SequenceMatcher ≥ 0.7 丢弃）
+  - 输出：List[Proposal] 候选，status=pending
+- ✅ **ProposalStore** `storage/proposal_store.py`
+  - 状态机：pending → approved / rejected / modified / deferred
+  - rejection_names() 反面样本库查询（给 ProposalEngine 闭环消费）
+  - mark_rejected 带 reason；mark_modified 支持 new_name + new_definition
+- ✅ **端到端真调 Qwen** `scripts/run_proposals.py`
+  - 单次调用 1565 tokens（prompt 556 + completion 1009），3 个提议全过闸门
+  - 产出：ScheduledTask(T1053.005) / ScheduledTaskModification(T1053.005+T1202) / is_ephemeral(NetworkEndpoint 属性, T1071.001+T1644)
+
+### 测试统计
+192/192 全绿（之前 167 + 组件 8 新增 25）
+- `test_proposer.py` 16（dataclass + 生成流程 + prompt 注入 + 四重闸门各层）
+- `test_proposal_store.py` 9（insert/幂等/四态机/rejection_names/count_by_status）
+
+### 关键发现
+- **Qwen 一次调用非常高效**：prompt 仅 556 tokens（含硬边界 + 本体词汇 + 3 组待处理信号），completion 1009 tokens（3 条详细提议）。演化周期级调用，token 预算极宽松。
+- **ScheduledTask 提议的 ATT&CK 映射准确**：Qwen 自动挂上 T1053.005（需求 Demo §8 预期的标签），无需人工提示。
+- **LLM 主动提议 `is_ephemeral` 属性**：针对 NetworkEndpoint 的 C2 beaconing 场景（T1071.001），**本体真的缺这个维度**。反面样本库可能会在阶段 3 审核阶段拒掉（如果审核员觉得超出 MVP 范围），但 LLM 的观察角度很犀利。
+- **重叠度闸门实战效果**：Qwen 诚实自报重叠度（ScheduledTask vs Process=0.35），没撒谎虚报。这是需求 R6（本体膨胀失控）风险缓解的第一道闸。
+- **字符串相似度闸门覆盖边界 case**：测试验证 "Accounts" 被 "Account"（本体已有）的 ratio 0.94 > 0.7 拒掉。
+
+### 下一阶段（阶段 3 剩余）
+- 组件 9 演化审核 UI（2 天）：Streamlit 提议卡片 + 四级决策（approved / rejected / modified / deferred）
+- 组件 10 变更传播 + Parser 自动生成 + 回放验证（5 天，**最高风险**）：
+  - ontology v1.0 → v1.1 生效
+  - LLM 基于 approved 提议 + 异常池事件 → 生成新 parser YAML 映射
+  - anomaly_pool 回放（backfilled=true）→ 重跑图 + 认知研判
+  - 对比报告：异常池规模 / 研判准确率 / 证据引用数
+
+---
+
 ## 2026-04-23 · 会话 7：阶段 2 收官 — 组件 7 信号中枢完整版（Week 2 末里程碑达成）
 
 ### 目标

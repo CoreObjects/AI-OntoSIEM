@@ -42,7 +42,7 @@
 | **阶段 0** | 需求理解、技术栈准备、仓库骨架 | 0.5 天 | — | 规划完成 | ✅ 完成 |
 | **阶段 1** | 基础设施层：数据 + 本体 + 解析器 | ~7 天 | 组件 1/2/3 + LLM 客户端 | Week 1 末「最小链路通」 | ✅ 完成 |
 | **阶段 2** | 检测 + 图谱 + 认知研判 + 信号中枢 | ~12 天 | 组件 4/5/6/7 | Week 2 末「端到端主路径通」 | ✅ 完成（Week 2 里程碑达成） |
-| **阶段 3** | 演化闭环：提议 + 审核 + Parser 生成 + 回放 | ~10 天 | 组件 8/9/10 | Week 3 末「演化闭环通」 | ⏳ 待开始 |
+| **阶段 3** | 演化闭环：提议 + 审核 + Parser 生成 + 回放 | ~10 天 | 组件 8/9/10 | Week 3 末「演化闭环通」 | 🔄 进行中（组件 8 完成） |
 | **阶段 4** | UI 集成 + 评测看板 + Docker + Demo 录屏 | ~3 天 | 组件 11 + 交付物 | Week 4 末「完整交付」 | ⏳ 待开始 |
 
 总计 32.5 天 → 双人并行 ≈ 22 工作日。
@@ -195,19 +195,18 @@ AI-OntoSIEM/
 
 **里程碑**：演化提议可产出 · 审核可操作 · Parser 自动生成可跑通。
 
-### 组件 8：本体演化提议引擎（3 天）
-- 输入：聚合信号 + 当前本体 + 历史拒绝记录
-- LLM structured output 生成提议
-- **硬边界（写死在 system prompt）**：
-  - 只能新增，不能修改/删除
-  - 必须附 ≥3 条支持样本
-  - 必须给出与现有元素重叠度
-  - 单次最多 5 个
-- 输出 schema：`proposal_type` / `name` / `semantic_definition` / `supporting_evidence` / `overlap_analysis` / `attack_mapping` / `source_signals`
-- 重叠度 > 0.7 自动丢弃（闸一）
-- 字符串 + embedding 双重冗余检测（闸二）
-- 拒绝提议入反面样本库，下次 prompt 注入避免重复
-- 双触发：周度定时 + 信号阈值即时
+### 组件 8：本体演化提议引擎（3 天）✅ 完成（会话 8）
+- ✅ ProposalEngine 输入 signal_hub.list_pending() + ontology + rejection_names
+- ✅ 四重闸门：system prompt 硬边界 + 代码二次校验 + overlap>0.7 丢弃 + SequenceMatcher 相似度>0.7 丢弃
+- ✅ Proposal schema：proposal_type / name / semantic_definition / supporting_evidence / overlap_analysis / attack_mapping / source_signals
+- ✅ ProposalStore 状态机：pending → approved / rejected / modified / deferred；rejection_names() 闭环反面样本库
+- ✅ 端到端真调 Qwen：单次 1565 tokens → 3 提议全过闸门
+   - ScheduledTask (T1053.005) — Demo §8 主故事线命中 ⭐
+   - ScheduledTaskModification (T1053.005, T1202)
+   - is_ephemeral (attr, T1071.001, T1644 — C2 beaconing)
+- ✅ 字符串 + overlap 双重闸门代替 embedding（MVP 简化）
+- ⏸️ 双触发（周度定时 + 信号阈值即时）：当前是手动 `scripts/run_proposals.py`；定时可 cron 挂载
+- ✅ 25 新测试（累计 192/192）
 
 ### 组件 9：演化审核 UI（2 天）
 - Streamlit 页签，每个提议卡片：类型 / 名称 / 语义定义 / 证据 / 冲突 / 影响 / ATT&CK
