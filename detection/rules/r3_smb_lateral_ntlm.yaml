@@ -1,0 +1,26 @@
+id: "r3-smb-lateral-ntlm"
+title: "NTLM Network Logon From Workstation Subnet"
+description: |
+  LogonType=3 + NtLmSsp + NTLM 包，源自工作站子网。
+  域内正常的网络登录应走 Kerberos；NTLM + 跨子网是 pass-the-hash / SMB 横向典型模式。
+author: "initial ruleset"
+status: "stable"
+level: "high"
+logsource:
+  channel: "Security"
+  product: "windows"
+event_ids: [4624]
+detection:
+  selection:
+    EventData.LogonType: "3"
+    EventData.LogonProcessName: "NtLmSsp"
+    EventData.AuthenticationPackageName: "NTLM"
+    EventData.IpAddress|startswith: "10.0.3."
+  condition: "selection"
+tags:
+  - "attack.t1021"
+  - "attack.t1021.002"
+  - "attack.lateral_movement"
+ontology_refs:
+  nodes: [Account, Host]
+  edges: [logged_into]

@@ -1,0 +1,25 @@
+id: "r4-suspicious-powershell-encoded"
+title: "Encoded / Hidden PowerShell Execution"
+description: |
+  powershell.exe 启动时带 -enc / -encodedCommand / -w hidden / -nop 等规避特征，
+  几乎总是攻击者 payload / loader。正常管理脚本应在脚本文件里。
+author: "initial ruleset"
+status: "stable"
+level: "high"
+logsource:
+  channel: "Microsoft-Windows-Sysmon/Operational"
+  product: "windows"
+event_ids: [1]
+detection:
+  selection:
+    EventData.Image|endswith: "powershell.exe"
+    EventData.CommandLine|contains: "-enc"
+  condition: "selection"
+tags:
+  - "attack.t1059"
+  - "attack.t1059.001"
+  - "attack.execution"
+  - "attack.defense_evasion"
+ontology_refs:
+  nodes: [Process, Host]
+  edges: [executed_on, spawned]

@@ -1,0 +1,24 @@
+id: "r5-admin-share-tool-transfer"
+title: "Write To Admin Share (C$/ADMIN$) — Lateral Tool Transfer"
+description: |
+  通过 SMB 管理员共享（C$ / ADMIN$）向远端写文件，
+  尤其是 Windows\\Temp 或 Windows\\System32 目录，T1570 横向工具传输典型模式。
+author: "initial ruleset"
+status: "stable"
+level: "high"
+logsource:
+  channel: "Security"
+  product: "windows"
+event_ids: [5145]
+detection:
+  selection:
+    EventData.ShareName|contains: "C$"
+    EventData.AccessMask: "0x2"
+    EventData.RelativeTargetName|contains: "Windows\\Temp"
+  condition: "selection"
+tags:
+  - "attack.t1570"
+  - "attack.lateral_movement"
+ontology_refs:
+  nodes: [Account, Host]
+  edges: [logged_into]

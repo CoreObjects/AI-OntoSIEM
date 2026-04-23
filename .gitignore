@@ -1,0 +1,72 @@
+# ===== 密钥与环境 =====
+.env
+.env.local
+*.key
+*.pem
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# ===== 数据文件（不入 git） =====
+data/*.duckdb
+data/*.duckdb.wal
+data/raw/
+data/cache/
+data/replay_reports/
+graph/graph.pickle
+graph/visualization.html
+
+# BOTSv3 原始数据（大文件）
+datasets/
+*.zip
+*.tar.gz
+
+# 临时提取文件
+requirements_extracted.txt
+
+# ===== IDE / 工具本地设置 =====
+.idea/
+.vscode/
+.claude/
+*.swp
+*.swo
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+
+# ===== Docker =====
+docker-compose.override.yml
+
+# ===== Streamlit =====
+.streamlit/secrets.toml
+
+# ===== 日志 =====
+*.log
+logs/
+
+# ===== 运行产物（每次 demo 会重生成）=====
+ontology/v1.*.yaml
+!ontology/v1.0.yaml
+parsers/generated/*.yaml
+data/proposals.duckdb
+data/rejected_proposals.duckdb
+data/signals.duckdb
+data/judgments.duckdb
+data/alerts.duckdb
+data/anomaly_pool.duckdb
+data/parsed_events.duckdb
+data/events.duckdb

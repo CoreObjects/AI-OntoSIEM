@@ -1,0 +1,33 @@
+# ===== 核心依赖 =====
+python-dotenv>=1.0.0             # 读取 .env
+pyyaml>=6.0                      # 本体 YAML / parser 配置
+duckdb>=1.0.0                    # 数据存储
+pandas>=2.0.0                    # 数据处理
+
+# ===== LLM =====
+openai>=1.40.0                   # OpenAI 兼容客户端（Qwen）
+tiktoken>=0.7.0                  # Token 计数（通用近似，Qwen 无官方，先用 cl100k_base 估算）
+
+# ===== 图谱层 =====
+networkx>=3.2                    # 图存储
+pyvis>=0.3.2                     # 图可视化 HTML
+
+# ===== 检测层 =====
+pysigma>=0.11.0                  # Sigma 规则引擎（可回退自写）
+
+# ===== UI =====
+streamlit>=1.35.0                # 主界面
+
+# ===== 文件监听（本体热加载）=====
+watchdog>=4.0.0
+
+# ===== 辅助 =====
+rich>=13.0.0                     # 日志 / CLI 美化
+pydantic>=2.5.0                  # 数据模型校验（可选）
+jsonschema>=4.20.0               # JSON schema 校验
+python-docx>=1.1.0               # 读需求文档（本次用过，保留以便再查）
+
+# ===== 开发 & 测试 =====
+pytest>=7.4.0
+pytest-cov>=4.1.0
+ruff>=0.4.0                      # lint + format（可选）

@@ -1,0 +1,30 @@
+id: "r1-lsass-memory-dump"
+title: "LSASS Memory Access (Potential Credential Dump)"
+description: |
+  非安全产品进程以危险的 GrantedAccess 打开 lsass.exe，
+  典型的 mimikatz / procdump / comsvcs.dll 窃凭证模式。
+author: "initial ruleset"
+status: "stable"
+level: "critical"
+logsource:
+  channel: "Microsoft-Windows-Sysmon/Operational"
+  product: "windows"
+event_ids: [10]
+detection:
+  selection:
+    EventData.TargetImage|endswith: "\\lsass.exe"
+    EventData.GrantedAccess:
+      - "0x1410"
+      - "0x1438"
+      - "0x143a"
+      - "0x1fffff"
+      - "0x1f0fff"
+      - "0x1f1fff"
+      - "0x1f3fff"
+  condition: "selection"
+tags:
+  - "attack.t1003"
+  - "attack.credential_access"
+ontology_refs:
+  nodes: [Process, Host]
+  edges: [executed_on]

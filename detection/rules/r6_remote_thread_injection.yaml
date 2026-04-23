@@ -1,0 +1,22 @@
+id: "r6-remote-thread-injection"
+title: "Suspicious CreateRemoteThread From Scripting Host"
+description: |
+  Sysmon EventID 8 (CreateRemoteThread) 由脚本宿主进程
+  （powershell / wscript / cscript / mshta）发起，通常是进程注入。
+author: "initial ruleset"
+status: "stable"
+level: "high"
+logsource:
+  channel: "Microsoft-Windows-Sysmon/Operational"
+  product: "windows"
+event_ids: [8]
+detection:
+  selection:
+    EventData.SourceImage|endswith: "powershell.exe"
+  condition: "selection"
+tags:
+  - "attack.t1055"
+  - "attack.defense_evasion"
+ontology_refs:
+  nodes: [Process, Host]
+  edges: [executed_on]

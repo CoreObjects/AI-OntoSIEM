@@ -1,0 +1,245 @@
+# ===== 本体定义 v1.0 =====
+# 这是 AI-OntoSIEM 的初始本体（v0 版本），定义系统能描述的安全世界。
+# 所有层通过 core/ontology_service.py 读取本体，严禁硬编码 schema。
+#
+# 演化规则（硬约束，违反即拒）：
+#   1) 只能新增，不能修改/删除已有节点、关系或必填属性
+#   2) 新增必须带 ≥3 条支持证据
+#   3) 新增必须给出与现有元素的重叠度分析
+#   4) 单次提议最多 5 个新元素
+#   5) User ↔ Account 绝不自动归并（风险控制，这是 L3 级演化）
+#
+# 元字段规约：每个节点和每条边都必带 meta_attrs，由系统自动维护。
+
+version: "1.0"
+created: "2026-04-22"
+created_by: "initial design"
+description: "初始本体 v0：覆盖 Windows 安全 MVP 所需的最小实体与关系集"
+
+# =========================================================
+# 节点（实体类型）
+# =========================================================
+nodes:
+
+  User:
+    description: "人类身份主体（来自 CMDB/IAM，不从日志推断）"
+    required_attrs:
+      - user_id
+      - display_name
+    optional_attrs:
+      - department
+      - email
+      - role
+      - manager
+    meta_attrs:
+      - first_seen
+      - last_seen
+      - confidence
+      - source
+      - ontology_version
+    notes:
+      - "User 节点绝不来自日志，只能从 CMDB/IAM 声明源导入"
+      - "原型阶段不做 User↔Account 自动归并"
+
+  Account:
+    description: "Windows 账户对象（来自日志，可以是服务账户/本地账户/域账户）"
+    required_attrs:
+      - sid
+      - domain
+      - username
+    optional_attrs:
+      - is_admin
+      - is_service
+      - is_disabled
+      - password_last_set
+    meta_attrs:
+      - first_seen
+      - last_seen
+      - confidence
+      - source
+      - ontology_version
+    notes:
+      - "SID 是 Account 的规范主键，优先用 SID 做实体消歧"
+      - "domain\\username 作为备选键，用于没有 SID 的事件"
+
+  Host:
+    description: "终端或服务器"
+    required_attrs:
+      - hostname
+    optional_attrs:
+      - os
+      - os_version
+      - ip_addresses
+      - tags
+      - is_domain_controller
+    meta_attrs:
+      - first_seen
+      - last_seen
+      - confidence
+      - source
+      - ontology_version
+
+  Process:
+    description: "进程实例（进程 ID 在重启后会复用，必须带启动时间才能唯一）"
+    required_attrs:
+      - pid
+      - image_name
+      - start_time
+    optional_attrs:
+      - command_line
+      - integrity_level
+      - parent_pid
+      - user_sid
+      - hash_sha256
+    meta_attrs:
+      - first_seen
+      - last_seen
+      - confidence
+      - source
+      - ontology_version
+
+  NetworkEndpoint:
+    description: "IP + port 组合，可以是内网或外网"
+    required_attrs:
+      - ip
+    optional_attrs:
+      - port
+      - protocol
+      - is_internal
+      - asn
+      - geoip_country
+    meta_attrs:
+      - first_seen
+      - last_seen
+      - confidence
+      - source
+      - ontology_version
+
+# =========================================================
+# 关系（边类型）
+# =========================================================
+edges:
+
+  owns:
+    from: User
+    to: Account
+    description: "身份拥有关系（仅来自 CMDB/IAM，不自动推断）"
+    cardinality: "1:N"
+    time_decay: none
+    confidence_source: "declared"
+    meta_attrs:
+      - first_seen
+      - last_seen
+      - confidence
+      - source
+      - ontology_version
+    notes:
+      - "原型阶段禁止自动推断；LLM 不得创建此边"
+
+  authenticated_as:
+    from: Host
+    to: Account
+    description: "某主机上有某账户成功认证（EventID 4624/4768）"
+    cardinality: "N:M"
+    time_decay: "90d"
+    confidence_source: "logged"
+    meta_attrs:
+      - first_seen
+      - last_seen
+      - confidence
+      - source
+      - ontology_version
+      - logon_type
+
+  logged_into:
+    from: Account
+    to: Host
+    description: "交互式或网络登录（EventID 4624，LogonType in {2,3,10}）"
+    cardinality: "N:M"
+    time_decay: "30d_sliding"
+    confidence_source: "logged"
+    meta_attrs:
+      - first_seen
+      - last_seen
+      - confidence
+      - source
+      - ontology_version
+      - logon_type
+
+  spawned:
+    from: Process
+    to: Process
+    description: "父子进程关系（Sysmon EventID 1 / Windows 4688）"
+    cardinality: "1:N"
+    time_decay: none
+    confidence_source: "logged"
+    meta_attrs:
+      - first_seen
+      - last_seen
+      - confidence
+      - source
+      - ontology_version
+
+  executed_on:
+    from: Process
+    to: Host
+    description: "进程运行在哪台主机"
+    cardinality: "N:1"
+    time_decay: none
+    confidence_source: "logged"
+    meta_attrs:
+      - first_seen
+      - last_seen
+      - confidence
+      - source
+      - ontology_version
+
+  connected_to:
+    from: Process
+    to: NetworkEndpoint
+    description: "网络连接（内联或外联，Sysmon EventID 3）"
+    cardinality: "N:M"
+    time_decay: "7d"
+    confidence_source: "logged"
+    meta_attrs:
+      - first_seen
+      - last_seen
+      - confidence
+      - source
+      - ontology_version
+      - direction
+
+# =========================================================
+# 元字段规约（所有 node/edge 共享）
+# =========================================================
+meta_attr_spec:
+  first_seen:
+    type: "datetime_iso8601"
+    description: "实体/关系第一次被观察到的时间"
+  last_seen:
+    type: "datetime_iso8601"
+    description: "最后一次被观察到的时间"
+  confidence:
+    type: "float[0..1]"
+    description: "观察置信度；< 0.8 视为弱匹配，进入观察区"
+  source:
+    type: "enum[log, cmdb, iam, manual, inferred]"
+    description: "实体/关系的来源类别"
+  ontology_version:
+    type: "string"
+    description: "创建/最后更新时所用的本体版本号"
+
+# =========================================================
+# ATT&CK 技术锚点（本原型聚焦这几个）
+# =========================================================
+attack_anchors:
+  - id: "T1078"
+    name: "Valid Accounts (合法账户滥用)"
+  - id: "T1021"
+    name: "Remote Services (远程服务)"
+  - id: "T1055"
+    name: "Process Injection (进程注入)"
+  - id: "T1053"
+    name: "Scheduled Task/Job (计划任务)"
+  - id: "T1570"
+    name: "Lateral Tool Transfer (横向工具传输)"

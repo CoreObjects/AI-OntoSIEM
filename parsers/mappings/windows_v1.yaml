@@ -1,0 +1,227 @@
+# ===== Windows 日志 Parser 配置 v1 =====
+# 初始手写配置，覆盖 ontology v1.0 的范围（5 节点 + 6 关系）。
+#
+# 故意不覆盖：
+#   - 4698 / 4702 (Scheduled Task 创建/修改) → Demo 演化锚点
+#   - Sysmon 3 (NetworkConnect) → 暂缓
+#   - 任何 ScheduledTask 相关字段
+#
+# 字段引用约定：
+#   "@computer"           → 事件顶层字段
+#   "@timestamp"          → 事件顶层 timestamp
+#   "event_data.XXX"      → event_data.XXX
+#   "const:value"         → 字面量 "value"
+
+version: "1.0"
+target_ontology_version: "1.0"
+description: "Windows Security + Sysmon 初始 parser 配置"
+
+rules:
+
+  # ---------- Windows Security Channel ----------
+
+  - name: "4624_successful_logon"
+    event_id: 4624
+    channel: "Security"
+    description: "成功登录 → Account 登录到 Host"
+    entities:
+      - node: Account
+        id_expr: "event_data.TargetUserSid"
+        attrs:
+          sid:      "event_data.TargetUserSid"
+          domain:   "event_data.TargetDomainName"
+          username: "event_data.TargetUserName"
+        meta:
+          source: log
+          confidence: 1.0
+      - node: Host
+        id_expr: "@computer"
+        attrs:
+          hostname: "@computer"
+        meta:
+          source: log
+          confidence: 1.0
+    relations:
+      - edge: logged_into
+        from_ref: Account
+        to_ref: Host
+        extra_attrs:
+          logon_type: "event_data.LogonType"
+      - edge: authenticated_as
+        from_ref: Host
+        to_ref: Account
+        extra_attrs:
+          logon_type: "event_data.LogonType"
+
+  - name: "4625_failed_logon"
+    event_id: 4625
+    channel: "Security"
+    description: "失败登录 → 只更新 Account.last_seen（不建 logged_into 边）"
+    entities:
+      - node: Account
+        id_expr: "event_data.TargetUserName"  # 失败登录常无 SID，用 username 兜底
+        attrs:
+          domain:   "event_data.TargetDomainName"
+          username: "event_data.TargetUserName"
+        meta:
+          source: log
+          confidence: 0.6   # 弱匹配：没有 SID
+      - node: Host
+        id_expr: "@computer"
+        attrs:
+          hostname: "@computer"
+        meta:
+          source: log
+          confidence: 1.0
+    relations: []
+
+  - name: "4634_logoff"
+    event_id: 4634
+    channel: "Security"
+    description: "注销（更新 last_seen）"
+    entities:
+      - node: Account
+        id_expr: "event_data.TargetUserSid"
+        attrs:
+          sid:      "event_data.TargetUserSid"
+          domain:   "event_data.TargetDomainName"
+          username: "event_data.TargetUserName"
+        meta:
+          source: log
+          confidence: 1.0
+    relations: []
+
+  - name: "4688_process_create"
+    event_id: 4688
+    channel: "Security"
+    description: "进程创建 → Process on Host"
+    entities:
+      - node: Process
+        id_expr: "compose:@computer|event_data.NewProcessId|@timestamp"
+        attrs:
+          pid:          "event_data.NewProcessId"
+          image_name:   "event_data.NewProcessName"
+          start_time:   "@timestamp"
+          command_line: "event_data.CommandLine"
+          parent_pid:   "event_data.ProcessId"
+        meta:
+          source: log
+          confidence: 1.0
+      - node: Host
+        id_expr: "@computer"
+        attrs:
+          hostname: "@computer"
+        meta:
+          source: log
+          confidence: 1.0
+      - node: Account
+        id_expr: "event_data.SubjectUserSid"
+        attrs:
+          sid:      "event_data.SubjectUserSid"
+          domain:   "event_data.SubjectDomainName"
+          username: "event_data.SubjectUserName"
+        meta:
+          source: log
+          confidence: 1.0
+    relations:
+      - edge: executed_on
+        from_ref: Process
+        to_ref: Host
+
+  # 故意不定义 4698/4702 → 进异常池（演化锚点）
+
+  # 5140 / 5145 也暂不建模（Demo 主要叙事不需要，保留为次要素材）
+
+  # ---------- Sysmon Channel ----------
+
+  - name: "sysmon_1_process_create"
+    event_id: 1
+    channel: "Microsoft-Windows-Sysmon/Operational"
+    description: "Sysmon ProcessCreate → Process + spawned 关系"
+    entities:
+      - node: Process
+        id_expr: "compose:@computer|event_data.ProcessId|@timestamp"
+        attrs:
+          pid:          "event_data.ProcessId"
+          image_name:   "event_data.Image"
+          start_time:   "@timestamp"
+          command_line: "event_data.CommandLine"
+          hash_sha256:  "event_data.Hashes"
+          parent_pid:   "event_data.ParentProcessId"
+        meta:
+          source: log
+          confidence: 1.0
+      - node: Process
+        ref_name: parent_process  # 区分两个 Process 节点
+        id_expr: "compose:@computer|event_data.ParentProcessId|const:parent"
+        attrs:
+          pid:          "event_data.ParentProcessId"
+          image_name:   "event_data.ParentImage"
+          command_line: "event_data.ParentCommandLine"
+        meta:
+          source: log
+          confidence: 0.8   # 父进程只看到引用，置信度略低
+      - node: Host
+        id_expr: "@computer"
+        attrs:
+          hostname: "@computer"
+        meta:
+          source: log
+          confidence: 1.0
+    relations:
+      - edge: spawned
+        from_ref: parent_process
+        to_ref: Process
+      - edge: executed_on
+        from_ref: Process
+        to_ref: Host
+
+  - name: "sysmon_8_createremotethread"
+    event_id: 8
+    channel: "Microsoft-Windows-Sysmon/Operational"
+    description: "CreateRemoteThread → 跨进程注入信号（不建新边，上报到检测层）"
+    entities:
+      - node: Process
+        ref_name: source
+        id_expr: "compose:@computer|event_data.SourceProcessId|const:rt_src"
+        attrs:
+          pid:        "event_data.SourceProcessId"
+          image_name: "event_data.SourceImage"
+        meta:
+          source: log
+          confidence: 0.9
+      - node: Process
+        ref_name: target
+        id_expr: "compose:@computer|event_data.TargetProcessId|const:rt_tgt"
+        attrs:
+          pid:        "event_data.TargetProcessId"
+          image_name: "event_data.TargetImage"
+        meta:
+          source: log
+          confidence: 0.9
+    relations: []  # 跨进程线程关系本体 v1.0 没建模
+
+  - name: "sysmon_10_processaccess"
+    event_id: 10
+    channel: "Microsoft-Windows-Sysmon/Operational"
+    description: "ProcessAccess → 进程访问关系（本体 v1.0 未定义，暂只建节点）"
+    entities:
+      - node: Process
+        ref_name: source
+        id_expr: "compose:@computer|event_data.SourceProcessId|const:pa_src"
+        attrs:
+          pid:        "event_data.SourceProcessId"
+          image_name: "event_data.SourceImage"
+        meta:
+          source: log
+          confidence: 0.9
+      - node: Process
+        ref_name: target
+        id_expr: "compose:@computer|event_data.TargetProcessId|const:pa_tgt"
+        attrs:
+          pid:        "event_data.TargetProcessId"
+          image_name: "event_data.TargetImage"
+        meta:
+          source: log
+          confidence: 0.9
+    relations: []
