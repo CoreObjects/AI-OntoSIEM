@@ -41,7 +41,7 @@
 |------|------|--------|----------|--------|------|
 | **阶段 0** | 需求理解、技术栈准备、仓库骨架 | 0.5 天 | — | 规划完成 | ✅ 完成 |
 | **阶段 1** | 基础设施层：数据 + 本体 + 解析器 | ~7 天 | 组件 1/2/3 + LLM 客户端 | Week 1 末「最小链路通」 | ✅ 完成 |
-| **阶段 2** | 检测 + 图谱 + 认知研判 + 信号中枢 | ~12 天 | 组件 4/5/6/7 | Week 2 末「端到端主路径通」 | 🔄 进行中（组件 4+5 完成，剩 6+7） |
+| **阶段 2** | 检测 + 图谱 + 认知研判 + 信号中枢 | ~12 天 | 组件 4/5/6/7 | Week 2 末「端到端主路径通」 | 🔄 进行中（组件 4+5+6 完成，仅剩 7） |
 | **阶段 3** | 演化闭环：提议 + 审核 + Parser 生成 + 回放 | ~10 天 | 组件 8/9/10 | Week 3 末「演化闭环通」 | ⏳ 待开始 |
 | **阶段 4** | UI 集成 + 评测看板 + Docker + Demo 录屏 | ~3 天 | 组件 11 + 交付物 | Week 4 末「完整交付」 | ⏳ 待开始 |
 
@@ -169,14 +169,15 @@ AI-OntoSIEM/
 - ✅ 端到端：6134 entities→3553 nodes，4036 relations→3574 edges
 - ✅ 57 新测试全绿（累计 132/132）
 
-### 组件 6：认知推理层（4 天 · **高风险组件**）
-- 输入：一条告警 + 1-2 跳图谱子图
-- Prompt 模板订阅本体变更，版本升级自动刷新概念定义
-- Qwen-Plus 2025-07-28 structured output
-- 输出 schema：`verdict` / `confidence` / `reasoning_steps` / `evidence_refs` / `attack_chain` / `next_steps` / `ontology_version` / `semantic_gap?`
-- **`evidence_refs` 强制回指，缺失视为无效输出**（反幻觉第一道闸门）
-- 低置信度（<0.5）→ 人工复核队列
-- 当 LLM 表达 semantic_gap → 同名信号上报
+### 组件 6：认知推理层（4 天 · **高风险组件**）✅ 完成（会话 6）
+- ✅ JudgmentEngine 接 Alert + GraphStore 子图 → Qwen structured JSON
+- ✅ system prompt 动态注入当前本体节点/边类型词汇表
+- ✅ evidence_refs 严格校验（matched_field / graph_node / graph_edge 三种 ref type，必须指向真实存在的对象）
+- ✅ 子图工程裁剪 `max_nodes_per_type`（默认 Process=8 top-by-last_seen），每条告警 token 从 127K 降到 ~6.5K
+- ✅ confidence < 0.5 → needs_review；semantic_gap 非空 → 上报 reasoning/semantic_gap 信号
+- ✅ JudgmentStore DuckDB 持久化 + 人工复核队列过滤
+- ✅ 端到端真调 Qwen：10 告警 → 10 研判（1 malicious + 9 suspicious），65K tokens
+- ✅ 22 新测试全绿（累计 154/154）
 
 ### 组件 7：演化信号中枢（2 天）
 - 统一 API：`report_signal(source_layer, signal_type, payload)`

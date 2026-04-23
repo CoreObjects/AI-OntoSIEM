@@ -44,9 +44,10 @@ requirements_extracted.txt
 *.swp
 *.swo
 
-# ===== OS =====
+# ===== OS / Office =====
 .DS_Store
 Thumbs.db
+~$*
 
 # ===== Docker =====
 docker-compose.override.yml

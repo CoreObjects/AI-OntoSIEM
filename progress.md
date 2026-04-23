@@ -4,6 +4,55 @@
 
 ---
 
+## 2026-04-23 · 会话 6：阶段 2 · 组件 6 认知推理层完整版（高风险 · 真调 Qwen 跑通）
+
+### 目标
+把 llm_client 接入 judgment_engine，告警+子图 → structured verdict，evidence_refs 严格校验，真实 Qwen LLM 端到端跑通 10 条告警。
+
+### 完成
+- ✅ **Judgment dataclass + JudgmentEngine** `reasoning/judgment_engine.py`
+  - 输入：Alert + GraphStore（以 `Host:alert.computer` 为 center 取 N 跳子图）
+  - 动态 system prompt：注入当前本体的节点/边类型词汇表（ontology 参数）
+  - 调 `llm_client.structured_json` 带 required_keys + 强校验 validator
+  - 响应 schema：`verdict / confidence / reasoning_steps / evidence_refs / attack_chain / next_steps / semantic_gap?`
+  - 低 confidence (<0.5) → `needs_review=True` 标记
+  - `semantic_gap` 非空 → 自动上报 `reasoning/semantic_gap` 信号（带 missing_concept 聚合 key）
+- ✅ **严格 evidence_refs 校验（反幻觉闸门二）**
+  - `type=matched_field` → ref 必须是 alert.matched_fields 的键
+  - `type=graph_node` → ref 必须是子图节点 key
+  - `type=graph_edge` → ref 格式 `edge_type:from_key->to_key`，必须是子图边
+  - 不合规 → llm_client 带着错误信息让模型重写（retry）
+- ✅ **子图工程裁剪（关键 token 优化）**
+  - `subgraph_node_types` 过滤（默认含 User/Account/Host/NetworkEndpoint/Process）
+  - `max_nodes_per_type`（默认 `{"Process": 8}`）按 last_seen desc 取 top-N
+  - 成效：初版每条告警 **127K tokens** → 优化后 **~6.5K tokens**（-95%）
+- ✅ **JudgmentStore** `storage/judgment_store.py`
+  - DuckDB 持久化 + 主键幂等 + 按 verdict 聚合 + 人工复核队列过滤 (`list_needs_review`)
+- ✅ **端到端 `scripts/run_judgments.py`**
+  - 真调 Qwen-Plus：10 告警 → 10 判决，**65K tokens**（累计仍在预算内）
+  - 结果：1 malicious（R1 LSASS dump conf 0.95）+ 9 suspicious（conf 0.65 居多）
+  - 6 个 semantic_gap 信号落到 signals.duckdb（喂给阶段 3 演化闭环）
+  - 零失败 / 零 evidence_refs 校验穿透
+
+### 测试统计
+154/154 全绿（之前 132 + 组件 6 新增 22）
+- `test_judgment_engine.py` 15（dataclass + judge flow + prompt 注入 + 子图裁剪 + 严格校验 + 低 confidence + semantic_gap 信号）
+- `test_judgment_store.py` 7（insert/many/幂等/list_recent/count_by_verdict/needs_review/semantic_gap 持久化）
+
+### 关键发现
+- **子图 depth=2 + Host center** 会把 3000+ Process 全拖进 prompt，**单条告警就 127K tokens**（占 1M 免费预算 12%）。工程裁剪 `max_nodes_per_type` 后降 95%。
+- **过度裁剪会让 LLM 误报 semantic_gap**：一开始完全删 Process，结果所有告警都标 semantic_gap（"看不到攻击进程上下文"）。折中 Process top-8 后 R1 回到 malicious 0.95。
+- **semantic_gap 的正解**是"本体词表里没有该概念"，不是"子图节点不全"。在 system prompt 明说"子图已裁剪 ≠ 本体缺失"，但 Qwen 有时仍会混淆。这其实对 Demo 有利——演示 LLM 谨慎保守的一面（R5 风险缓解：低置信拒答）。
+- **10 条告警出 1 硬判定 + 9 疑似**：Demo 叙事极佳——"AI 不敢乱说话，evidence_refs 强制回指 + 子图约束让它保守研判"。与 Demo 动线 §6（3:30-4:30 主动暴露失败案例）对齐。
+- **evidence_refs 严格校验零穿透**：10 条告警 12 次 LLM 调用（2 次重试），所有最终输出的 ref 都能在 alert / 子图里找到对应物。反幻觉闸门实战生效。
+
+### 下一阶段（阶段 2 最后）
+- 组件 7 信号中枢完整版（2 天）：聚合（24h 同类型 > 20 条 → 待处理）+ 冷热分级查询 API + 看板入口
+  - 热力图看板 UI 放阶段 4
+- 至此 Week 2 末「端到端主路径通」里程碑达成
+
+---
+
 ## 2026-04-22 · 会话 5：阶段 2 · 组件 5 知识图谱层完成（高风险模块一次会话攻克）
 
 ### 目标
