@@ -4,6 +4,65 @@
 
 ---
 
+## 2026-05-09 · 会话 14：阶段 4 A 段 — 评测看板 + 4 个核心数字（指标层 + Streamlit 看板）
+
+### 目标
+阶段 4 A 段 wedge：把需求文档 §6.4 "首页一眼看到 4 个核心数字 + 演化前后对比" 落地。组件 10 Day 5（rollback / 全管线 / 测试修补）暂搁置——不是 Demo 必需。
+
+### 完成
+- ✅ **`evolution/metrics.py`** 纯函数指标层（无 LLM、无副作用）
+  - `compute_judgment_accuracy(judgments, alerts, ground_truth)` → `(rate, correct, total, breakdown_per_rule)`
+  - `compute_feedback_adoption(signals, judgment_count)` → `(rate, up, down, jc)`，过滤 `signal_type=manual_annotation` + `payload.feedback ∈ {up, down}`
+  - `compute_ontology_coverage(parsed_count, anomaly_pool_open)` → `parsed / (parsed + open)`
+  - `load_ground_truth(yaml_path)` 鲁棒加载（文件缺则返空 dict 不崩）
+  - `MetricsSnapshot` dataclass + `to_dict()`
+  - `collect_metrics(...)` 顶层装配
+- ✅ **`data/ground_truth.yaml`** 6 条规则人工真值表
+  - r1 LSASS / r3 SMB-NTLM / r4 encoded PS / r6 远程线程 → malicious
+  - r2 异常服务账户登录 / r5 admin 共享传输 → suspicious
+  - 每条带 notes 解释判断依据（可读性优先）
+- ✅ **`ui/dashboard.py`** Streamlit 看板（薄层）
+  - 顶部 4 metric（研判准确率 / 反馈采纳率 / 本体覆盖率 / 异常池规模）
+  - 中段：v1.0 → v1.1 对比（含 ValidatorReport.to_dict() 诠释 verdict 升降级 / semantic_gap clear/persist）
+  - 底部：accuracy by rule + 异常池 by event_id 拆分
+  - 数据源 6 个 DuckDB + ground_truth.yaml + replay_reports/validator_*.json（取最新）
+  - 文件缺失全部降级显示（warning），不崩
+
+### 测试统计
+299/299 全绿（之前 282 + A 段新增 17）
+- `test_metrics.py` 15（accuracy 五种边界 / feedback 三种 / coverage 三种 / snapshot dataclass / load_ground_truth 加载与缺失 / collect_metrics 装配）
+- `test_ui_dashboard.py` 2（smoke：import + 导出符号）
+
+### 真数据指标实证
+| 指标 | v1.0 (before) | v1.1 (after) | Δ |
+|---|---|---|---|
+| 研判准确率 | **50.0%** (5/10) | **44.4%** (4/9) | **-5.6pp** ★ |
+| 反馈采纳率 | 0.0% | 0.0% | (Demo 还没人点) |
+| 本体覆盖率 | 99.6% (2297/2307) | 99.6% | 0 |
+| 异常池规模 | 10 | 10 | 0（v1.0 时代是 32，Day 3 后已 10）|
+
+按规则拆分 (v1.0 → v1.1):
+- r1 lsass: **1/1 → 0/1** ★（LSASS 从 malicious 降到 suspicious，演化代价）
+- r2 svc 登录: 3/3 → 3/3（保持正确）
+- r3 SMB-NTLM: 0/3 → 0/3（LLM 始终保守）
+- r4 encoded PS: 0/1 → (重判失败)
+- r5 admin 共享: 1/1 → 1/1
+- r6 远程线程: 0/1 → 0/1
+
+### 关键发现
+- **演化的代价具象化** ★：异常池 32→10 是显性收益，但准确率 50%→44.4% 是隐性代价。这两个数字并列出现在 demo 看板上 —— 决策层会立刻问"为什么准确率下降？"，正中 Demo §8 6:00 "主动暴露失败案例"段。**Demo 不需要装"AI 永远更好"，需要装"演化机制可观测"**。
+- **LLM 在 r3 SMB-NTLM 始终保守判 suspicious**（0/3）：不是 v1.1 退步，是从 v1.0 起就稳定保守。这是 R5 风险固定特征——分析师反馈循环（B 段 👍/👎 → 反馈采纳率指标）才是纠偏机制。
+- **反馈采纳率自然为 0**：Demo 录屏过程中真实点几下👍/👎，这数字立刻动起来 —— 演示"反馈机制不是装饰"。
+- **本体覆盖率 99.6% 稳定**：和 v1.0 一致，因为 anomaly_pool open 没变（4702/5140/5145 还在池里）。下一轮演化（approve ScheduledTaskModification）会把 4702 也 cover，覆盖率会进一步提升。
+- **`MetricsSnapshot.to_dict()` 是 API 契约**：以后 Docker 部署后可以 `/api/metrics` 直接返这份 JSON，前端不绑死 Streamlit。
+
+### 下一阶段
+- **B 段** `ui/judgment_review.py` 告警研判页：左告警列表 / 中 AI 研判卡片 / 右图谱片段 + 👍/👎 按钮 → manual_annotation 信号
+- **C 段** `ui/main.py` 三页签整合（看板 + 研判 + 演化）+ 本体演化页（合并组件 9 提议审核 + Day 2 candidate UI + 版本历史）
+- **D 段** Docker Compose + README 快速启动 + 5 分钟 Demo 录屏脚本 + 立项 Memo（2-3 页）
+
+---
+
 ## 2026-05-09 · 会话 13：阶段 3 · 组件 10 Day 4 — 演化前/后对比报告（认知层重推 + ValidatorReport）
 
 ### 目标

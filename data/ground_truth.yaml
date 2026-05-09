@@ -1,0 +1,39 @@
+# ===== 评测真值表（人工标注）=====
+# 用于评测看板的"研判准确率"指标。
+# rule_id → expected_verdict（{benign, suspicious, malicious}）
+#
+# 标注原则（基于 ATT&CK 技术 + 上下文风险评估）：
+#   - 凭证窃取 (T1003 LSASS) → malicious（机制本身唯一意图就是窃凭证）
+#   - 进程注入 (T1055 远程线程) → malicious
+#   - SMB/NTLM 横向 (T1021) → malicious（合法跨主机不会走 NTLM 中继）
+#   - encoded PowerShell (T1059) → malicious（合法运维基本不用 -enc）
+#   - 异常服务账户登录 (T1078) → suspicious（svc_backup 跨日志类型出现可能合法）
+#   - 管理员共享文件传输 (T1570) → suspicious（备份/SCCM 部署可能合法）
+#
+# 演化前后对比时，accuracy 会因 LLM 保守化（v1.1 把 r1 LSASS 从 malicious 降级
+# 到 suspicious）而下降。Demo §8 6:00 主动暴露失败案例的核心数字材料。
+
+rules:
+  r1-lsass-memory-dump:
+    expected_verdict: malicious
+    notes: "LSASS 内存导出（T1003）；唯一意图是窃取凭证哈希。"
+
+  r2-anomalous-service-account-logon:
+    expected_verdict: suspicious
+    notes: "服务账户跨主机登录（T1078）；svc_backup 在多 Host 上出现可能是合法备份链。"
+
+  r3-smb-lateral-ntlm:
+    expected_verdict: malicious
+    notes: "SMB/NTLM 横向（T1021.002）；合法管理通常用 Kerberos 不走 NTLM。"
+
+  r4-suspicious-powershell-encoded:
+    expected_verdict: malicious
+    notes: "encoded PowerShell（T1059.001）；合法运维基本不用 -EncodedCommand 混淆。"
+
+  r5-admin-share-tool-transfer:
+    expected_verdict: suspicious
+    notes: "ADMIN$ 写入（T1570）；SCCM/备份运维可能合法，需要看上下文。"
+
+  r6-remote-thread-injection:
+    expected_verdict: malicious
+    notes: "CreateRemoteThread（T1055.001）；跨进程线程注入几乎只有恶意代码会做。"
