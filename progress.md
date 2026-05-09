@@ -4,6 +4,57 @@
 
 ---
 
+## 2026-05-09 · 会话 15：阶段 4 B 段 — 告警研判页（三栏 + 👍/👎 反馈闭环）
+
+### 目标
+B 段 wedge：把"反馈采纳率"从 demo 看板上的固定 0% 变成可点击动起来的真实数字 —— 三栏布局让审核员能在一个屏看完告警→AI 研判→图谱片段，底部 👍/👎 按钮一键写 manual_annotation 信号。
+
+### 完成
+- ✅ **`evolution/feedback.py`** 反馈记录纯函数
+  - `record_feedback(signal_hub, *, judgment_id, feedback, alert_id=None, notes=None)`
+  - 校验 feedback ∈ {"up", "down"}（其他抛 ValueError）+ judgment_id 非空
+  - 写入：`source_layer="copilot"`, `signal_type="manual_annotation"`, `aggregation_key="copilot:manual_annotation:{up|down}"`（让看板能分别统计👍/👎数）
+  - payload 含 judgment_id + feedback + 可选 alert_id + 可选 notes
+- ✅ **`ui/judgment_review.py`** Streamlit 三栏告警研判页
+  - **左栏**：告警列表（rule_id + severity + verdict 内联显示 + 🕳 semantic_gap / 🔁 needs_review 标记 + 时间 + computer），点击切换 selected_alert_id
+  - **中栏**：AI 研判卡片
+    - verdict 三色 emoji（🔴 malicious / 🟡 suspicious / 🟢 benign）+ confidence + ontology_version 三 metric
+    - 推理链编号列表
+    - evidence_refs 全量 + ref type 标签
+    - ATT&CK 攻击链
+    - next_steps 折叠
+    - semantic_gap 折叠（如有）
+  - **右栏**：图谱片段
+    - `subgraph_around(Host, computer, depth=1)` 按节点类型分组（Host / Account / User / Process / ScheduledTask / NetworkEndpoint）+ backfilled 节点带 🆕 标记
+    - **孤岛 ScheduledTask 节点专区**：同主机但还没边连入子图（v1.2 演化加 `schedules` 边前的过渡态）—— 让 demo 看到"演化进度的下一站"
+    - LLM 在 evidence_refs 里引用的 graph_node 高亮
+  - **底部**：反馈面板 — text_input notes + 👍 / 👎 按钮 → record_feedback → manual_annotation 信号入库
+  - 缓存：`@st.cache_resource` 包 GraphStore（含异常池 4698 重灌让 ScheduledTask 节点真在图里）+ SignalHub
+
+### 测试统计
+309/309 全绿（之前 299 + B 段新增 10）
+- `test_feedback.py` 8（写信号 / alert_id / notes / aggregation_key 区分 up&down / 不传可选不写 / 非法值拒 / 空 judgment_id 拒 / 真 SignalHub 落库幂等）
+- `test_ui_judgment_review.py` 2（smoke：import + 6 个导出 helper）
+
+### 真闭环实证
+1. 端到端跑 graph rebuild：3590 nodes / 3580 edges，**ScheduledTask 节点 17 个**（来自 4698 重灌）
+2. 选 HR-WS-01 上 r4-powershell 告警 → 子图 347 nodes，evidence_refs 6 条
+3. 子图本身没拉到 ScheduledTask（因为还没 schedules 边）→ 孤岛专区列出来
+4. 模拟点 👎 + notes "LSASS 应判 malicious 而不是 suspicious" → record_feedback 落 signals.duckdb
+5. 跑 dashboard collect_metrics: **反馈采纳率 0.0% → 11.1%（1/9 judgments）** ★
+
+### 关键发现
+- **图谱片段必须包含"未连接但相关"节点**：`subgraph_around` 走边遍历，但 candidate parser 的 relations 在 G7 strip 阶段被全砍。结果 ScheduledTask 17 个节点存在图里但孤岛。UI 用 `node_id` 前缀匹配 `{computer}:` 把它们捞出来 —— 这反而成 demo 加分项："看，演化分两步走，先加节点（v1.1）后加边（v1.2）"。
+- **`@st.cache_resource` 包整个图谱构建**：每次 streamlit rerun 不重建图（3590 节点 + 异常池重灌很慢）。代价：审批了新 candidate 后需要重启 streamlit 进程才看到新节点（Demo 录屏不影响）。
+- **反馈循环已成 demo 数字驱动力**：之前看板 0.0% 是死的。现在每点一次按钮，看板立刻动 —— 演示"反馈机制不是装饰"的底层支撑就位。Demo §8 4:30-5:00 收尾段可现场点一次让数字飞。
+- **B 段 0 token 消耗**：纯 UI + 信号写入，不调 LLM。组件 10 + 阶段 4 累计 ~79K tokens 不变。
+
+### 下一阶段
+- **C 段** `ui/main.py` 三页签整合 —— 把 dashboard / judgment_review / 演化（合并 evolution_review + parser_review + 版本历史）放到一个 streamlit run 入口
+- **D 段** Docker Compose + README 快速启动 + 5 分钟 Demo 录屏脚本（含演练剧本）+ 立项 Memo 2-3 页
+
+---
+
 ## 2026-05-09 · 会话 14：阶段 4 A 段 — 评测看板 + 4 个核心数字（指标层 + Streamlit 看板）
 
 ### 目标
