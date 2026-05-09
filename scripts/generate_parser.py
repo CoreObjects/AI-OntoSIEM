@@ -23,6 +23,7 @@ from evolution.parser_generator import ParserGenerator     # noqa: E402
 from parsers.windows_parser import ParserConfig, MAPPINGS_DIR  # noqa: E402
 from reasoning.llm_client import get_client                # noqa: E402
 from storage.anomaly_pool import AnomalyPool               # noqa: E402
+from storage.candidate_parser_store import CandidateParserStore  # noqa: E402
 from storage.proposal_store import ProposalStore           # noqa: E402
 
 
@@ -51,18 +52,25 @@ def main() -> int:
         return 1
 
     pool = AnomalyPool()
+    candidate_store = CandidateParserStore()
     cfg = ParserConfig.load_all([MAPPINGS_DIR])
     llm = get_client()
     gen = ParserGenerator(llm=llm, ontology=onto)
 
-    out_dir = ROOT / "parsers" / "generated"
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    n_ok = n_drop = 0
+    n_ok = n_drop = n_skip = 0
     for row in approved:
         proposal = store.as_proposal(row["proposal_id"])
         if proposal is None:
             continue
+
+        # 已有同 proposal 的 pending 或 approved 候选 → 跳过（避免重复花 token）
+        existing = candidate_store.list_by_proposal(proposal.proposal_id)
+        active = [r for r in existing if r["status"] in ("pending", "approved")]
+        if active:
+            print(f"  - skip {proposal.name}: 已存在 {len(active)} 条 active 候选")
+            n_skip += 1
+            continue
+
         # 收集 event_id → anomaly 样本
         event_ids = _event_ids_from_signals(proposal.source_signals)
         if not event_ids:
@@ -87,11 +95,11 @@ def main() -> int:
             n_drop += 1
             continue
 
+        candidate_store.insert(candidate)
         n_ok += 1
-        path = out_dir / f"{candidate.candidate_id[:8]}.yaml"
-        path.write_text(candidate.yaml_text, encoding="utf-8")
-        print(f"  [OK] candidate {candidate.candidate_id[:8]}  conf={candidate.confidence}  "
-              f"rules={len(candidate.rules)}  stripped_rels={len(candidate.stripped_relations)}")
+        print(f"  [OK] candidate {candidate.candidate_id[:8]}  status=pending  "
+              f"conf={candidate.confidence}  rules={len(candidate.rules)}  "
+              f"stripped_rels={len(candidate.stripped_relations)}")
         for r in candidate.rules:
             ents = [e.get("ref_name") or e["node"] for e in r.get("entities") or []]
             rels = [f"{rel['edge']}:{rel['from_ref']}->{rel['to_ref']}"
@@ -100,12 +108,13 @@ def main() -> int:
         for s in candidate.stripped_relations:
             print(f"     - [STRIP] {s['edge']}: {s.get('from_ref')}->{s.get('to_ref')}")
             print(f"              {s['reason']}")
-        print(f"  → {path}")
 
     u = llm.usage
     print(f"\n[LLM] calls={u.calls}  prompt={u.prompt_tokens}  "
           f"completion={u.completion_tokens}  total={u.total_tokens}")
-    print(f"[summary] {n_ok} candidates written, {n_drop} rejected")
+    print(f"[summary] {n_ok} new candidates inserted, {n_drop} dropped, {n_skip} skipped")
+    print(f"          total in store: {candidate_store.count()}  "
+          f"by status: {candidate_store.count_by_status()}")
     return 0
 
 

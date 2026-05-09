@@ -4,6 +4,55 @@
 
 ---
 
+## 2026-05-09 · 会话 11：阶段 3 · 组件 10 Day 2 — 候选 Parser 持久化 + 审核 UI + 抽样回放预览
+
+### 目标
+Day 2 wedge：把 Day 1 产出的 `CandidateParser` 串到端到端审核流：候选入库 (pending) → Streamlit 审核员看 rules / stripped_relations / 抽样回放成功率 → 点 Approve 把 YAML 写到 `parsers/generated/<id>.yaml` + 翻状态 approved。
+
+### 完成
+- ✅ **CandidateParserStore** `storage/candidate_parser_store.py`（DuckDB · 与 ProposalStore 同套约定）
+  - schema：`candidate_parsers (candidate_id PK, triggered_by_*, target_node_type, source_events JSON, rules JSON, sample_count, confidence, explanation, stripped_relations JSON, status, yaml_path, rejection_reason, created_at, updated_at)`
+  - 状态机：pending → approved（写 yaml_path）/ rejected（写 rejection_reason）
+  - API：`insert / insert_many / get / as_candidate / list_by_status / list_by_proposal / count / count_by_status / mark_approved / mark_rejected`
+  - JSON 列 round-trip 干净（rules / source_events / stripped_relations）
+- ✅ **parser_review_actions** `evolution/parser_review_actions.py`
+  - `approve_and_apply(store, cid)` → 写 `parsers/generated/<8位>.yaml` + `mark_approved`；非 pending 抛 `CandidateNotPending`
+  - `reject_candidate(store, cid, reason)` → `mark_rejected`
+  - `preview_candidate_parsing(candidate, samples, ontology)` → 临时实例化 WindowsParser（NoOp anomaly_pool / signal_hub stub），跑 `parse_event` 拿 `{total, success_count, success_rate, parsed_samples, failures}`，**dry-run 不污染全局**
+- ✅ **Streamlit 审核页** `ui/parser_review.py`
+  - 顶部 4 metric：本体版本 / 待审核 / 已通过 / 已拒绝
+  - 候选卡片：target_node_type + confidence + 样本数 + source_events + 完整 rules 展开（entities 含 ref_key 标注 / attrs / id_expr） + **🚫 stripped_relations** 折叠区（带原因，让审核员看 LLM 想干啥被闸门拦下） + LLM explanation
+  - "▶ 跑抽样回放" 按钮：取 N 条异常池样本跑 `preview_candidate_parsing`，展示成功率 + 解析样例 + 失败原因
+  - "✅ Approve & Apply" / "❌ Reject"（reject 带 popover 输入理由）
+  - 历史区：approved / rejected 折叠
+- ✅ **`scripts/generate_parser.py` 更新**：候选 insert 进 store（status=pending），YAML 推迟到 approve 时落盘；同 proposal 已有 active 候选时跳过（不浪费 token）
+
+### 测试统计
+260/260 全绿（之前 236 + Day 2 新增 24）
+- `test_candidate_parser_store.py` 13（CRUD + 幂等 + JSON round-trip + 状态机 + list_by_proposal + 跨进程持久化）
+- `test_parser_review_actions.py` 9（approve 写 YAML / 拒重复 approve / reject 记理由 / preview schema / preview 成功 / preview 失败 / preview 不污染）
+- `test_ui_parser_review.py` 2（smoke：import + 导出符号）
+
+### 端到端真调实证
+- `generate_parser.py` 跑出 1 候选（pending），LLM 用 2671 tokens：1 规则覆盖 4698，3 实体（ScheduledTask + Account + Host），2 关系被 G7 端点 strip
+- 预览 10 条 4698 anomaly 样本：**100% 解析成功**（达 Demo §8 预期 94% 之上）
+- approve_and_apply：YAML 写入 `parsers/generated/1581021d.yaml` (1130 bytes)，状态翻 approved
+- `ParserConfig.load_all([MAPPINGS_DIR, GENERATED_MAPPINGS_DIR])` 现总 8 规则（原 7 + 新 ScheduledTask 1）—— Day 3 replay engine 会拿这个配置重跑异常池
+
+### 关键发现
+- **抽样回放预览是审核可信度的关键**：审核员看到"10/10 success"+"实际 ScheduledTask 节点 ID 长这样" 才敢按 approve。光看 LLM 自报 confidence=0.85 没有意义。
+- **`stripped_relations` 在 UI 里展示效果好**：候选卡片把 LLM 想建但被拦下的 2 条关系（authenticated_as / executed_on）以及拒因列出来 —— Demo 叙事 R5（主动暴露 LLM 失败案例）的好素材。
+- **dry-run stub 必要**：`WindowsParser` 默认会触发 `anomaly_pool.add` 和 `signal_hub.report_signal`。preview 必须用 NoOp stub 否则会反复污染全局状态。
+- **跳过已 active 候选**：避免重跑 generate_parser 浪费 token 也避免 store 出现多个待审 candidate 互相竞争。
+
+### 下一阶段（Day 3）
+- `evolution/replay_engine.py` + `scripts/replay_anomaly_pool.py`
+  - applied YAML → ParserConfig hot reload → 重跑 anomaly_pool 4698/4702 → 成功 mark_backfilled + 灌图（带 backfilled=true 元字段）
+  - 异常池规模指标：32 → ?（核心 Demo 数字）
+  - 失败的样本留池等下一轮演化
+
+---
+
 ## 2026-05-09 · 会话 10：阶段 3 · 组件 10 Day 1 — Parser 自动生成器（核心亮点）
 
 ### 目标

@@ -64,6 +64,7 @@ ontology/v1.*.yaml
 !ontology/v1.0.yaml
 parsers/generated/*.yaml
 data/proposals.duckdb
+data/candidate_parsers.duckdb
 data/rejected_proposals.duckdb
 data/signals.duckdb
 data/judgments.duckdb
