@@ -138,6 +138,22 @@ class AnomalyPool:
         with self._lock:
             self._con.execute("DELETE FROM anomaly_pool")
 
+    def reset_backfilled(self) -> int:
+        """把全部 backfilled=True 的记录翻回 False。
+
+        用于 demo 重跑（Day 3 已 backfilled 后，Day 4 想重新走一次完整管线）。
+        返回受影响行数。
+        """
+        with self._lock:
+            self._con.execute(
+                "UPDATE anomaly_pool SET backfilled = FALSE, backfilled_at = NULL, "
+                "backfilled_ontology_version = NULL WHERE backfilled = TRUE"
+            )
+            n = self._con.execute(
+                "SELECT COUNT(*) FROM anomaly_pool"
+            ).fetchone()[0]
+        return int(n)
+
     def close(self) -> None:
         with self._lock:
             self._con.close()

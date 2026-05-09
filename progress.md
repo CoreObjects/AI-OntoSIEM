@@ -4,6 +4,59 @@
 
 ---
 
+## 2026-05-09 · 会话 13：阶段 3 · 组件 10 Day 4 — 演化前/后对比报告（认知层重推 + ValidatorReport）
+
+### 目标
+Day 4 wedge：拿 v1.0 时代的老 judgments → 升级后图谱（含 ScheduledTask 节点）→ 用 v1.1 本体重判全部 alerts → 输出 diff（异常池规模 / verdict 变化 / semantic_gap 清除率 / evidence_refs 增量）。
+
+### 完成
+- ✅ **`evolution/replay_validator.py`**
+  - **`compare_judgments(before, after, *, pool_open_before/after, ontology_version_before/after)`** —— 纯 diff 函数无 LLM，TDD 友好
+  - **`rejudge_alerts(engine, alerts)`** —— 调真 LLM 重判（脚本用）
+  - **`VerdictChange`** dataclass：alert_id / before/after verdict + confidence + evidence_count / new_graph_node_refs / semantic_gap_cleared / `delta` property（upgraded/downgraded/unchanged）
+  - **`ValidatorReport`** dataclass：起止时间 + 本体版本 before/after + 异常池 before/after（含 `pool_delta` property）+ 重判数 + 三档 verdict 计数（upgraded/downgraded/unchanged）+ semantic_gap 清除/持续 + evidence_refs avg before/after + 完整 verdict_changes 列表 + `to_dict()`
+- ✅ **`AnomalyPool.reset_backfilled()`**：把 backfilled=True 翻回 False（demo 重跑时让 fresh state 可复现）
+- ✅ **`scripts/run_replay_validator.py`** 端到端
+  1. 读老 judgments（v1.0）
+  2. 重建图 + reset_backfilled + 跑 replay → 图谱含 ScheduledTask
+  3. 用 v1.1 本体 + 升级后图重判全部 alerts
+  4. 重判结果写 `data/judgments_after_replay.duckdb`（保留与 v1.0 对照）
+  5. compare_judgments → ValidatorReport
+  6. 落 JSON `data/replay_reports/validator_<ts>.json`
+
+### 测试统计
+282/282 全绿（之前 271 + Day 4 新增 11）
+- `test_replay_validator.py` 11（dataclass schema + delta property + 0 changes / upgrades / downgrades / unchanged 三档计数 + semantic_gap cleared/persisted + avg refs + new graph_node refs 收集 + pool/version 透传 + alert_id 不匹配跳过）
+
+### 端到端真调实证（71K tokens）
+| 指标 | before (v1.0) | after (v1.1) | 备注 |
+|---|---|---|---|
+| 异常池规模 | 32 | 10 | Day 3 已得，validator 携带进报告 |
+| 重判成功 | — | 9/10 | r4 PowerShell evidence_refs 校验重试耗尽 |
+| verdict upgraded | — | 0 | LLM 没把 suspicious→malicious |
+| verdict **downgraded** | — | **1** | r1 LSASS dump：malicious(0.95) → suspicious(0.65) |
+| verdict unchanged | — | 8 | |
+| semantic_gap cleared | — | 1 | r5-admin-share 之前有 gap，现 clean |
+| semantic_gap persisted | — | 5 | 都是关于 Thread/NetworkConnection 等 v1.2 才会演化加的概念 |
+| evidence_refs avg | 8.60 | 6.78 | LLM 在 v1.1 上下文中略精简（细节集中） |
+| 新引用的 graph_node | — | `Host:HR-WS-01` / `User:u2001` 等 | 证明新本体节点真的进了证据链 |
+
+### 关键发现
+- **LLM 把 LSASS dump 反而降级了** ★ 真意外但**正是 Demo R5 风险绝佳素材**：v1.1 让 LLM 看到 HR-WS-01 上有合法 ScheduledTask，它就用"看到更多"做"我不敢妄判"的理由，confidence 从 0.95 砍到 0.65。这印证了 §6 "AI 谨慎保守的一面"叙事，可以直接放进 Demo §8 6:00 "主动暴露失败案例"段。Demo 不需要"LLM 永远更好"，需要"LLM 真实可解释"。
+- **r4-powershell 重试耗尽**：LLM 引 `Host:HR-WS-01->authenticated_as->Account:...-1001` 这条边但子图里没这具体方向。3 次重试都没修。这是组件 6 evidence_refs 严格校验的边界 case（不是 Day 4 的问题），下一轮 prompt 调优可改。
+- **`compare_judgments` 与 `rejudge_alerts` 分离**很关键：让 diff 逻辑可独立 TDD 不需 mock LLM，11 个测试全是纯函数检查。`rejudge_alerts` 反而是薄薄一层 for 循环，不需要测试。
+- **`reset_backfilled()` 是 demo 重跑必需**：Day 3 已经把 22 条 4698 标 backfilled 了，今天 fresh state 跑需要重置。这也提示 Day 5 的回滚机制要考虑"全管线幂等"。
+- **新本体节点真的进了 evidence_refs**：`Host:HR-WS-01` / `User:u2001` 出现在 new_graph_node_refs，说明 LLM 不是装样子用图——而是真的把图的节点抽出来作为证据。反幻觉闸门第二道（evidence_refs 严格校验）落到实处。
+
+### 下一阶段（Day 5）
+- 回滚机制：`evolution/rollback_proposer.py`
+  - 指标恶化（如 verdict_downgraded > upgraded、avg_evidence_refs 大降、persisted >> cleared）→ 自动产出回滚提议（"撤销 ScheduledTask 节点"）
+  - 人工确认才 apply（不自动回滚，符合 R8 "演化空转"风险缓解）
+- 端到端 pipeline 脚本：一条命令从 approve 到 validator 全链路
+- 测试覆盖修补 + 全量回归 + 文档
+
+---
+
 ## 2026-05-09 · 会话 12：阶段 3 · 组件 10 Day 3 — 异常池回放引擎（Demo §8 主数字达成）
 
 ### 目标

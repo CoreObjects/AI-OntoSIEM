@@ -68,6 +68,7 @@ data/candidate_parsers.duckdb
 data/rejected_proposals.duckdb
 data/signals.duckdb
 data/judgments.duckdb
+data/judgments_after_replay.duckdb
 data/alerts.duckdb
 data/anomaly_pool.duckdb
 data/parsed_events.duckdb
