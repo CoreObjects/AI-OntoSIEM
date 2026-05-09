@@ -4,6 +4,68 @@
 
 ---
 
+## 2026-05-09 · 会话 12：阶段 3 · 组件 10 Day 3 — 异常池回放引擎（Demo §8 主数字达成）
+
+### 目标
+Day 3 wedge：approved candidate parser → ParserConfig 热加载 → ReplayEngine 跑过异常池所有 backfilled=False 记录 → 成功 mark_backfilled + 灌图（target 节点带 backfilled=True attrs）→ 输出报告。
+
+### 完成
+- ✅ **ReplayEngine** `evolution/replay_engine.py`
+  - 输入：`(anomaly_pool, parser_config, ontology, graph)`；输出 `ReplayReport`
+  - 内部 WindowsParser 走 `_NoOpAnomalyPool` / `_NoOpSignalHub` stub —— 副作用隔离，不会因再次失败往原池重复写
+  - 灌图策略：**新建**实体打 `backfilled=True` + `backfilled_at` + `backfilled_ontology_version`；已存在实体只合并 last_seen 不打 flag（避免误标"老节点是 backfill 来的"）
+  - 报告字段：`{started/finished_at, ontology_version, total_open_before/after, attempted, backfilled, failed, new_entities, merged_entities, new_relations, merged_relations, by_event_id, success_rate}`
+- ✅ **ReplayReport.to_dict()**：JSON 友好序列化（含 success_rate property）
+- ✅ **`scripts/replay_anomaly_pool.py`** 端到端
+  1. 重建图谱（`import_parsed_db` + `load_cmdb`）
+  2. 加载升级后本体 v1.1 + ParserConfig（含 generated/）
+  3. ReplayEngine.replay()
+  4. 报告 JSON 落 `data/replay_reports/replay_<ts>.json`
+  5. 渲染回放后图谱 HTML `graph/visualization_replay.html`
+
+### 测试统计
+271/271 全绿（之前 260 + Day 3 新增 11）
+- `test_replay_engine.py` 11（dataclass + 空池零值 + mark_backfilled / leaves failed / skip already / new vs merged 计数 / target backfilled flag / 已存在实体不打 flag / by_event_id 拆分 / pool size before-after / 不双重日志）
+
+### 端到端真数据回放（v1.1 含 ScheduledTask + 1 个 approved candidate parser）
+**核心 Demo 数字 ★：异常池规模 `32 → 10`**
+
+| event_id | open before | backfilled | failed | open after | 备注 |
+|---|---|---|---|---|---|
+| 4698 | 22 | 22 (**100%**) | 0 | 0 | candidate 命中，全 backfill |
+| 4702 | 8 | 0 | 8 | 8 | 留池等 ScheduledTaskModification 提议第二轮 |
+| 5140 | 1 | 0 | 1 | 1 | 暂无规则（次要素材） |
+| 5145 | 1 | 0 | 1 | 1 | 暂无规则 |
+
+**灌图细分**：
+- `new_entities=31`：17 ScheduledTask 节点（全新）+ 14 Account（之前没出现的 SID）
+- `merged_entities=35`：Host + 已存在 Account 与原 4624 事件 merge
+- `new_relations=0`：candidate 的 relations 被 Day 1 G7 端点闸门 strip 掉了。**这是正确行为** —— ScheduledTask 节点落图就够了，关系建立留给 v1.2 演化（Demo §8 预期）
+
+**ScheduledTask 节点抽样**（全部带 `backfilled: True`）：
+- `FIN-WS-03:\Microsoft\Windows\UpdateOrchestrator\USO_UxBroker`
+- `FIN-SRV-01:\Microsoft\Windows\Chkdsk\ProactiveScan`
+- `HR-WS-01:\MS_Compatibility_Check`
+- `FIN-SRV-01:\Microsoft\Windows\MS_Telemetry_Update`
+- 等 17 个
+
+### 关键发现
+- **NoOp stub 复用**：preview（Day 2）和 replay（Day 3）都需要 dry-run 风格的 parser，复用同一对 `_NoOpAnomalyPool` / `_NoOpSignalHub` 模式。今后若加更多 dry-run 场景（e.g. 评估新规则）应抽到 `parsers/dry_run.py` 共用。
+- **`backfilled` 加在 `attrs` 而非 `meta`**：因为 GraphStore.upsert_entity 的 meta merge 是 hard-coded 字段（first_seen/last_seen/confidence/source/ontology_version），扩展会动 store 接口。attrs 是开放 dict，零侵入。
+- **新 vs 合并的判断**：用 `graph.has_node(...)` 在 upsert 前查一次。这不是大规模优化，但保证 Demo 视觉上"哪些节点是回放新加的"有准确依据。
+- **回放的副作用真要小心**：第一版我没传 NoOp stub，replay 把 4702/5140/5145 的失败再次往原 pool 写了一遍 —— 立刻 size_total 翻倍。修一下就好，但提醒了"任何把 parser 拿来重复跑的场景都要管 stub"。
+- **Demo §8 1:30-2:30 的"变更传播动画"现在有真的素材**：parser apply (Day 2) → 异常池 32→10 (Day 3) → graph 加 17 ScheduledTask 节点。下面 Day 4 把 LLM 重推之前 semantic_gap 的告警接上，整条链就贯通了。
+
+### 下一阶段（Day 4）
+- 认知层重推：之前 judgment_store 里 `semantic_gap` 涉及 ScheduledTask 的 → 重新跑（新本体含该概念了）
+- `evolution/replay_validator.py`：对比报告
+  - 异常池规模 `32→10`（Day 3 已得）
+  - judgment verdict 变化（之前 suspicious 重推后会不会变 malicious / benign）
+  - evidence_ref 增量（多了多少 graph_node ref 指向 ScheduledTask）
+- 写到 `data/replay_reports/<ts>_validator.json`
+
+---
+
 ## 2026-05-09 · 会话 11：阶段 3 · 组件 10 Day 2 — 候选 Parser 持久化 + 审核 UI + 抽样回放预览
 
 ### 目标
