@@ -4,6 +4,52 @@
 
 ---
 
+## 2026-05-09 · 会话 16：阶段 4 C 段 — 三页签整合（main.py 单入口 + 演化 sub-tab + 版本历史）
+
+### 目标
+C 段 wedge：把 4 个独立 streamlit run 入口（dashboard / judgment_review / evolution_review / parser_review）整合到 `ui/main.py` 单入口，对应需求文档 §6.4 "Streamlit 三页签：告警研判 / 本体演化 / 评测看板"。演化 tab 内部再 sub-tab 拆"提议审核 / 候选 Parser / 版本历史"。
+
+### 完成
+- ✅ **4 个子页拆 `render_page()` / `render_content()`**
+  - `render_page()` 保留独立运行入口 `streamlit run ui/<x>.py`（向后兼容 + 调试方便）
+  - `render_content()` 不调 `set_page_config`，仅渲染内容；给 main.py 的 tab 容器嵌入
+  - 涉及 `ui/dashboard.py` / `ui/judgment_review.py` / `ui/evolution_review.py` / `ui/parser_review.py`
+- ✅ **`ui/main.py`** 统一入口
+  - 顶部 banner：标题 + caption + 当前本体版本/节点边数 metric
+  - 三 tab：📊 评测看板 / 🛡️ 告警研判 / 📐 本体演化
+  - 演化 tab 内 sub-tab：🆕 提议审核 / 🔧 候选 Parser / 📜 版本历史
+- ✅ **版本历史 sub-tab** `_render_version_history` + `_load_evolution_history`
+  - 扫 `ontology/v*.yaml`，按版本号升序
+  - 顶部时间线：`v1.0 → v1.1 → ...` 一行展示
+  - 每版本卡片：created_by / 节点边数 metric / nodes & edges 列表展开 / 升级记录（每条提议 base→target + proposal_id 8 位 + applied_at）
+
+### 测试统计
+313/313 全绿（之前 309 + C 段新增 4：ui_main 4）
+- `test_ui_main.py` 4（main + helpers smoke / `_load_evolution_history` 真数据加载 / 缺目录返空）
+- 4 个原 page 的 smoke test 都加 `render_content` 调用断言
+
+### 真数据实证
+版本时间线读取正确：
+```
+v1.0 (initial design, 5 nodes, 6 edges) → v1.1 (ontology_upgrader proposal bae04eee, 6 nodes, 6 edges)
+v1.0 → v1.1: 新增 node ScheduledTask (bae04eee)
+```
+
+### 关键发现
+- **`render_page()` / `render_content()` 拆分模式**很关键：streamlit 的 `st.set_page_config` 全局只能调一次，独立运行 vs 整合运行需要不同入口。这种"双模式"模式以后还能用在 docker compose 部署（main.py）+ 单页调试（render_page）。
+- **顶部 banner 显示当前本体版本**：是 demo 视觉锚点 —— 演化升级后切回主页，左上角本体版本立刻从 v1.0 变 v1.1，演示"全系统订阅本体变更"的视觉冲击。
+- **版本历史 sub-tab 利用现有 `evolution_history` 字段**：`OntologyUpgrader` 早就在写这个字段（每次升级追加一条），但之前没 UI 展示。这次补上，整个演化轨迹首次可视化。
+- **C 段 0 token 消耗**：纯 UI 重构 + 新页 + smoke test。组件 10 + 阶段 4 累计 ~79K tokens 不变。
+
+### 下一阶段（D 段，阶段 4 收官 + 项目交付）
+- `docker-compose.yml` + `Dockerfile` 一键启动（streamlit + 数据卷挂载 .env）
+- `README.md` 快速启动 + 演示步骤（5 步入门 + 阶段 §3 Demo 主线）
+- `docs/demo_script.md` 5 分钟 Demo 录屏剧本（按需求文档 §8 动线 + 解说词）
+- `docs/memo.md` 立项 Memo（2-3 页）—— 决策层友好版总结
+- `docs/architecture.md` 架构图 + 数据流图（如需要）
+
+---
+
 ## 2026-05-09 · 会话 15：阶段 4 B 段 — 告警研判页（三栏 + 👍/👎 反馈闭环）
 
 ### 目标

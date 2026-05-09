@@ -33,8 +33,14 @@ from storage.proposal_store import ProposalStore  # noqa: E402
 # =========================================================
 
 def render_page() -> None:
+    """独立运行入口（streamlit run ui/evolution_review.py）。"""
     st.set_page_config(page_title="AI-OntoSIEM · 演化审核", layout="wide")
-    st.title("📐 演化提议审核 · AI-OntoSIEM")
+    render_content()
+
+
+def render_content() -> None:
+    """页面内容；可被 ui/main.py 的 tab 容器嵌入。"""
+    st.title("📐 本体演化提议审核")
 
     svc = _cached_service()
     store = _cached_store()

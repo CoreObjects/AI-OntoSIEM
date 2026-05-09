@@ -48,9 +48,15 @@ REPORTS_DIR = ROOT / "data" / "replay_reports"
 # =========================================================
 
 def render_page() -> None:
+    """独立运行入口（streamlit run ui/dashboard.py）。"""
     st.set_page_config(page_title="AI-OntoSIEM · 评测看板",
                        layout="wide")
-    st.title("📊 评测看板 · AI-OntoSIEM")
+    render_content()
+
+
+def render_content() -> None:
+    """页面内容；可被 ui/main.py 的 tab 容器嵌入（不调 set_page_config）。"""
+    st.title("📊 评测看板")
     st.caption("4 个核心数字 + 演化前后对比 · 决策层一眼可见")
 
     snap_before, snap_after = _load_snapshots()

@@ -50,9 +50,15 @@ CMDB_FILE = ROOT / "ontology" / "cmdb.yaml"
 # =========================================================
 
 def render_page() -> None:
+    """独立运行入口（streamlit run ui/judgment_review.py）。"""
     st.set_page_config(page_title="AI-OntoSIEM · 告警研判",
                        layout="wide")
-    st.title("🛡️ 告警研判 · AI-OntoSIEM")
+    render_content()
+
+
+def render_content() -> None:
+    """页面内容；可被 ui/main.py 的 tab 容器嵌入。"""
+    st.title("🛡️ 告警研判")
     st.caption(
         "左：告警列表 / 中：AI 研判 + 推理链 + 证据回指 / 右：相关图谱片段。"
         "底部 👍/👎 触发 manual_annotation 信号回流到看板。"

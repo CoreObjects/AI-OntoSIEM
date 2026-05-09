@@ -5,6 +5,7 @@ from __future__ import annotations
 def test_ui_module_imports_cleanly() -> None:
     import ui.judgment_review as jr
     assert callable(jr.render_page)
+    assert callable(jr.render_content)
 
 
 def test_ui_exports_expected_helpers() -> None:

@@ -30,8 +30,14 @@ from storage.candidate_parser_store import CandidateParserStore  # noqa: E402
 # =========================================================
 
 def render_page() -> None:
+    """独立运行入口（streamlit run ui/parser_review.py）。"""
     st.set_page_config(page_title="AI-OntoSIEM · Parser 候选审核", layout="wide")
-    st.title("🔧 Parser 候选审核 · AI-OntoSIEM")
+    render_content()
+
+
+def render_content() -> None:
+    """页面内容；可被 ui/main.py 的 tab 容器嵌入。"""
+    st.title("🔧 候选 Parser 审核")
     st.caption(
         "组件 10：基于 approved 提议 + 异常池样本，LLM 生成候选 parser；"
         "审核员先看抽样回放成功率，再决定 approve / reject。"

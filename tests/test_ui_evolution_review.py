@@ -5,6 +5,7 @@ from __future__ import annotations
 def test_ui_module_imports_cleanly() -> None:
     import ui.evolution_review as ev
     assert callable(ev.render_page)
+    assert callable(ev.render_content)
 
 
 def test_ui_exports_expected_helpers() -> None:
