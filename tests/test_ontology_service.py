@@ -20,7 +20,8 @@ def svc() -> OntologyService:
 
 
 def test_loads_v1_0(svc: OntologyService) -> None:
-    onto = svc.get_current()
+    onto = svc.get_version("1.0")
+    assert onto is not None
     assert onto.version == "1.0"
     assert "User" in onto.nodes
     assert "Account" in onto.nodes
@@ -71,7 +72,8 @@ def test_attack_anchors_present(svc: OntologyService) -> None:
 
 def test_no_scheduled_task_in_v1_0(svc: OntologyService) -> None:
     """v1.0 故意不含 ScheduledTask，这是 Demo 演化的锚点。"""
-    onto = svc.get_current()
+    onto = svc.get_version("1.0")
+    assert onto is not None
     assert "ScheduledTask" not in onto.nodes
     assert "created_task" not in onto.edges
 

@@ -4,6 +4,53 @@
 
 ---
 
+## 2026-05-09 · 会话 10：阶段 3 · 组件 10 Day 1 — Parser 自动生成器（核心亮点）
+
+### 目标
+组件 10 Day 1 wedge：`evolution/parser_generator.py` —— LLM 输入 (approved Proposal + 异常池样本 + 现 parser 配置 + 升级后本体) → 输出 candidate parser YAML（含 rules / target_node_type / confidence / stripped_relations）。严格 TDD。
+
+### 完成
+- ✅ **Bootstrap 升级 v1.0→v1.1**：调 `approve_and_upgrade(ScheduledTask)` 一键产 `ontology/v1.1.yaml`（含 ScheduledTask 节点 + ATT&CK T1053.005 锚点 + evolution_history）
+- ✅ **CandidateParser dataclass** `evolution/parser_generator.py`
+  - 字段：candidate_id / triggered_by_ontology_version / triggered_by_proposal_id / target_node_type / source_events / rules / sample_count / confidence / explanation / status (pending/approved/applied/rejected) / stripped_relations / created_at
+  - `yaml_text` property 渲染为可写入 `parsers/generated/<id>.yaml` 的合法文本（与 ParserConfig.load_all 兼容）
+- ✅ **ParserGenerator** 七道闸门
+  - **G1 字段引用真实**：`event_data.X` 引用的 X 必须在样本 event_data 实际出现；`compose:` 子段同理（不许嵌套 compose）
+  - **G2 类型在本体**：target_node_type / entities[*].node / relations[*].edge 必须在升级后的本体里
+  - **G3 round-trip 兼容**：cleaned rule 必须能被 `EventRule.from_dict` 接受
+  - **G4 target_node 被引用**：至少一条 entity 引用 target_node_type
+  - **G5 User 节点禁止**（CMDB-only 硬边界） → 整候选 reject
+  - **G6 owns 边禁止**（declared-only 硬边界） → strip 该 relation 不丢候选
+  - **G7 边端点类型严格匹配**（ontology.edge_endpoints == (from.node, to.node)） → strip
+- ✅ **DSL 注入**：system prompt 明确五种合法表达式（@computer / @timestamp / event_data.X / compose: / const:）+ 八条硬边界
+- ✅ **`scripts/generate_parser.py`** 端到端：扫 `approved` 提议 → 抽 source_signals 中 event_id → 异常池采样 → 生成 + 写 YAML
+- ✅ **修 `_normalize_version` 老 bug**：原来"加 v 前缀"，但 `_versions` 字典 key 是裸 "1.0"，导致 `get_version("1.0")` 永远返回 None。改为"剥 v 前缀归一化"
+
+### 测试统计
+236/236 全绿（之前 215 + 组件 10 Day 1 新增 21）
+- `test_parser_generator.py` 21（dataclass + 生成流程 + prompt 注入 + G1 字段引用 + G2 类型 + G3 兼容 + G4 引用 + G5 User 禁 + G6 owns strip + G7 端点 strip）
+- `test_ontology_service.py` 微调 2 个用例改用 `get_version("1.0")` 而非 `get_current()`（v1.1 已成最新）
+
+### 真调 Qwen 实证
+- prompt=1,987 / completion=597 / **total=2,584 tokens**（一次调用即出可审核 candidate）
+- LLM 完全听话："用 Account 不用 User"、"不建 owns 边" 一次过；
+- LLM 仍尝试 `authenticated_as: Account→ScheduledTask` 和 `executed_on: ScheduledTask→Host` —— **两条都被 G7 端点 strip**，原因写明给审核员看
+- 产出 `parsers/generated/<id>.yaml`：1 条规则覆盖 4698，三个实体（ScheduledTask + Account + Host）+ 0 关系
+
+### 关键发现
+- **LLM 仍会"积极建关系"**：哪怕 system prompt 强调端点要严格匹配，Qwen 还是想拼出"账户认证到任务"、"任务运行在主机"两条边。**G7 strip 比 reject 整候选更友好**（保留有用的 entity 部分，stripped_relations 给审核员看到 LLM 试过什么）。
+- **`extra_attrs` 也是反幻觉战场**：本次 LLM 在 extra_attrs 里塞了一句自然语言 `'Task creation initiated by user account'` —— 不是表达式而是描述。G1 表达式校验器把它认成"hallucinated field"剔除，副作用正好。
+- **4698 vs 4702**：LLM 只为 4698 建了规则，没给 4702 单独规则（本次 prompt 把两类样本混合了 18 条进去）。这是合理的——4702 是 "modify" 而非 "create"，Demo 后续 v1.2 加 ScheduledTaskModification 节点时再触发第二轮 parser 生成。
+- **`_normalize_version` 是个潜伏 bug**：v1.0 时代没人调 `get_version`，所以一直没暴露。Day 1 的 bootstrap 升级让 `get_current` 返回 v1.1，老的 v1.0 测试改成 `get_version("1.0")` 后才发现这个一加 v 一不加 v 的方向反了。
+
+### 下一阶段（Day 2-5）
+- **Day 2** `storage/candidate_parser_store.py` + UI 扩展：候选状态机 (pending / approved / applied / rejected) + 抽样回放预览（在审核 UI 里展示 candidate 应用后能解析多少 anomaly）
+- **Day 3** `evolution/replay_engine.py` + `scripts/replay_anomaly_pool.py`：candidate.applied → ParserConfig.load_all 含 generated → 重跑 anomaly_pool 4698/4702 → 成功 mark_backfilled + 灌图
+- **Day 4** 认知重推 + `evolution/replay_validator.py`：之前 semantic_gap 的 judgment 重推；diff 报告（异常池规模 32→? / verdict 变化 / evidence_ref 增量）
+- **Day 5** 回滚机制 + 端到端 pipeline + 测试覆盖修补
+
+---
+
 ## 2026-04-23 · 会话 9：阶段 3 · 组件 9 演化审核 UI（四级决策 + 本体版本升级）
 
 ### 目标

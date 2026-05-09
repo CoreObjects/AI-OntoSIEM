@@ -219,9 +219,12 @@ class _OntologyFileHandler(FileSystemEventHandler):
 
 
 def _normalize_version(v: str) -> str:
+    """归一化为字典 key 形式（裸数字，无 v 前缀）。
+    接受 "1.0" / "v1.0" 两种输入；输出统一 "1.0"。
+    """
     v = v.strip()
-    if not v.startswith("v") and re.match(r"^\d", v):
-        v = "v" + v
+    if v.startswith("v"):
+        v = v[1:]
     return v
 
 
