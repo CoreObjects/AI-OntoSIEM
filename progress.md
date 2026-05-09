@@ -4,6 +4,76 @@
 
 ---
 
+## 2026-05-09 · 会话 17：阶段 4 D 段（项目收官） — Docker + README + Demo 剧本 + 立项 Memo
+
+### 目标
+D 段一次性收完。前面 A/B/C 段把功能与 UI 跑通，D 段是交付包装：让别人能在 5 分钟内跑起来 + 5 分钟内看完 demo + 30 分钟内做 GO/NO-GO 决策。
+
+### 完成
+- ✅ **`Dockerfile`**：python:3.10-slim 基底，pip 装依赖，CMD 启 `streamlit run ui/main.py`，含健康检查（`/_stcore/health`）
+- ✅ **`docker-compose.yml`**：单服务，env_file 挂 `.env`，data/ + ontology/ + parsers/generated/ + graph/ 四个卷持久化（保证 DuckDB 状态、演化产物、HTML 跨容器重启保留）
+- ✅ **`README.md`**（~200 行）
+  - 一句话演示（异常池 32→10 / 准确率 50→44 / 反馈采纳率 0→11.1%）
+  - 五层 + 一横切架构图（ASCII）
+  - 快速启动两种模式（Docker / 本地 venv）
+  - 5 分钟演示动线（精简版）
+  - 4 个核心数字表 + 流水线脚本对照表
+  - 关键契约（硬边界 / 反幻觉闸门 / 实体消歧 / token 预算）
+  - 当前限制 / 未来工作 / 文档目录
+- ✅ **`docs/demo_script.md`**（~280 行）5 分钟录屏剧本
+  - 时间线精确到秒（0:00-0:30 / 0:30-1:00 / ... / 4:30-5:00）
+  - 每段含画面 / 操作 / 焦点 / 解说词
+  - 后台真实数字附录（v1.0 vs v1.1 表 / 通过提议表 / candidate 表）
+  - 录屏前 checklist（11 项 — 数据库幂等重置、本体回 v1.0、proposals 全 pending 等）
+- ✅ **`docs/memo.md`**（~190 行）立项 Memo
+  - TL;DR + 解决什么问题 + MVP 量化结果
+  - 关键差异点（vs 主流 AI SIEM 6 维对比表）
+  - 风险与缓解（R1-R10）
+  - 关键决策与权衡（6 项）
+  - 项目里程碑回顾表
+  - **Phase 5 生产化路线图**（必做/应做/选做 三档分级）
+  - **推荐 GO/NO-GO 评审标准**（4 项量化阈值）
+
+### 项目最终状态
+- **313/313 测试全绿**
+- **总 LLM token 消耗 ~79K**（< 1M Qwen 免费额度 8%）
+- **代码量**：约 5800 行实现 + 290 行 Streamlit UI + 750 行 D 段文档
+- **完成阶段**：0 / 1 / 2 / 3（除组件 10 Day 5 rollback 自动化暂搁置） / 4 全部 ✅
+- **未做**：组件 10 Day 5 自动回滚 + 全管线脚本（不影响 demo，留作 Phase 5 收尾）
+
+### 关键发现（项目级总结）
+- **演化机制横切是真的横切**：组件 10 触达 5 层（parser / anomaly_pool / graph / cognitive / 报告），每一步都得做"上一步产物 + 下一步输入"的桥接。这是组件 10 比 5/6/8/9 复杂度高一个量级的根本原因。
+- **TDD 铁律的回报**：313 测试是 demo 现场不翻车的护城河。每个 wedge 都靠测试套件做"安全网"，否则 5 段 wedge 早就互相打架了。
+- **演化代价是 demo 灵魂**：异常池 32→10 是显性收益，准确率 50→44 是隐性代价。两数字并列就是 R5 风险（分析师信任）的现场抓手。Demo 不装"AI 永远更好"，装"AI 真实可解释、错误可观测可纠正"。
+- **`render_page() / render_content()` 双模式**让 streamlit UI 既能整合也能独立调试 —— 是 Phase 5 多租户/多入口的良好基础。
+- **token 预算异常宽松**：~79K 消耗 vs 1M 额度 = 8%。即使生产化按 ¥0.04/K token 估算单次完整跑批 ¥3.2，每月百次跑批也才 ¥320。**LLM 成本不是瓶颈，工程化才是。**
+
+### 项目交付物清单
+- 代码：`evolution/`（10 模块）+ `parsers/` + `detection/` + `graph/` + `reasoning/` + `core/` + `storage/` + `ui/`（5 个 streamlit 页 + 1 个 main 入口）
+- 测试：`tests/` 313 测试
+- 数据生成：`scripts/`（10 个脚本，端到端可重复）
+- 文档：`README.md` / `CLAUDE.md` / `task_plan.md` / `progress.md` / `findings.md` / `docs/ontology_v1.md` / `docs/attack_scenarios.md` / `docs/demo_script.md` / `docs/memo.md`
+- 部署：`Dockerfile` + `docker-compose.yml`
+- 本体：`ontology/v1.0.yaml`（初始）+ 演化历史落于 `evolution_history` 字段
+- 真值表：`data/ground_truth.yaml`
+
+### 阶段 4 项目级数字
+| 维度 | 数值 |
+|---|---|
+| 测试套件 | 313/313 全绿 |
+| LLM 消耗 | ~79K tokens（8% of 1M 额度） |
+| 代码量 | ~5800 行实现 + 290 行 UI |
+| 文档量 | ~3000 行（含 progress.md / README / Demo 剧本 / Memo） |
+| 端到端脚本 | 10 个（生成数据 → 解析 → 检测 → 研判 → 提议 → 演化 → 回放 → 验证） |
+| 提交数 | 17 次 commit（每次 wedge 一次） |
+
+### 项目结束语
+**MVP 原型交付完成。** 演化机制横切五层的设计 + 4 重闸门 + 反幻觉 evidence_refs 校验 + 评测前后对比 diff —— 这套组合在 1 个月内跑通，证明了 AI-native SIEM 的可行性。
+
+下一步是 Phase 5 GO/NO-GO 评审。建议 8 周内完成。
+
+---
+
 ## 2026-05-09 · 会话 16：阶段 4 C 段 — 三页签整合（main.py 单入口 + 演化 sub-tab + 版本历史）
 
 ### 目标

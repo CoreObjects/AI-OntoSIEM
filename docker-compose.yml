@@ -1,0 +1,43 @@
+# AI-OntoSIEM Demo Stack
+# 一条命令启动：docker compose up
+#
+# 注意：
+#   - .env 必须包含 DASHSCOPE_API_KEY（Qwen-Plus 后端）
+#   - data/ 卷挂载让 DuckDB 状态跨容器重启保持
+#   - 首次跑前需要本地或容器内执行：
+#       python scripts/generate_demo_data.py
+#       python scripts/run_parser.py
+#       python scripts/run_detection.py
+#       python scripts/run_judgments.py
+#     这些脚本可以在 build 时进 image，也可以在容器起来后用 docker exec 跑。
+
+version: "3.9"
+
+services:
+  ai-ontosiem:
+    build: .
+    image: ai-ontosiem:demo
+    container_name: ai-ontosiem-demo
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    environment:
+      # 单线程 DuckDB 模式更稳（多 streamlit session 共享同一 DB）
+      DUCKDB_THREADS: "1"
+    volumes:
+      # 数据持久化：DuckDB / 异常池 / 信号 / 提议 / 候选 parser / 回放报告
+      - ./data:/app/data
+      # 本体 yaml 持久化：演化升级产物 v1.X.yaml 跨容器保留
+      - ./ontology:/app/ontology
+      # 演化生成的 parser yaml
+      - ./parsers/generated:/app/parsers/generated
+      # 图可视化 HTML 输出
+      - ./graph:/app/graph
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
