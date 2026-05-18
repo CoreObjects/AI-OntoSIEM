@@ -1,0 +1,1118 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BOTSv3 安全事件图建模</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --panel-2: #1f2937;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --line: #475569;
+      --identity: #60a5fa;
+      --endpoint: #34d399;
+      --network: #f59e0b;
+      --cloud: #a78bfa;
+      --message: #fb7185;
+      --detection: #f87171;
+      --evidence: #94a3b8;
+      --asset: #22d3ee;
+      --selected: #facc15;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: radial-gradient(circle at top left, #1e293b 0, #0f172a 45%, #020617 100%);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+      overflow: hidden;
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: 280px 1fr 340px;
+      height: 100vh;
+    }
+
+    .left-panel,
+    .right-panel {
+      background: rgba(15, 23, 42, 0.92);
+      border-color: rgba(148, 163, 184, 0.22);
+      backdrop-filter: blur(12px);
+      padding: 18px;
+      overflow-y: auto;
+    }
+
+    .left-panel {
+      border-right: 1px solid rgba(148, 163, 184, 0.22);
+    }
+
+    .right-panel {
+      border-left: 1px solid rgba(148, 163, 184, 0.22);
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: 22px;
+      line-height: 1.2;
+    }
+
+    h2 {
+      margin: 22px 0 10px;
+      font-size: 15px;
+      color: #f8fafc;
+    }
+
+    p {
+      color: var(--muted);
+      line-height: 1.6;
+      margin: 8px 0;
+      font-size: 13px;
+    }
+
+    .tagline {
+      font-size: 13px;
+      color: #cbd5e1;
+      padding: 10px 12px;
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      border-radius: 14px;
+      background: rgba(30, 41, 59, 0.7);
+      margin-bottom: 16px;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 10px 0 18px;
+    }
+
+    button {
+      border: 1px solid rgba(148, 163, 184, 0.3);
+      background: rgba(30, 41, 59, 0.9);
+      color: var(--text);
+      border-radius: 999px;
+      padding: 8px 11px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: 0.16s ease;
+    }
+
+    button:hover {
+      border-color: #cbd5e1;
+      background: rgba(51, 65, 85, 0.95);
+    }
+
+    button.active {
+      border-color: var(--selected);
+      color: #fef3c7;
+      background: rgba(113, 63, 18, 0.65);
+    }
+
+    .legend-item,
+    .edge-item {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      margin: 9px 0;
+      font-size: 13px;
+      color: #d1d5db;
+    }
+
+    .dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      display: inline-block;
+      flex: 0 0 12px;
+    }
+
+    .edge-line {
+      width: 28px;
+      height: 2px;
+      background: #94a3b8;
+      position: relative;
+      flex: 0 0 28px;
+    }
+
+    .edge-line::after {
+      content: "";
+      position: absolute;
+      right: -2px;
+      top: -4px;
+      border-left: 8px solid #94a3b8;
+      border-top: 5px solid transparent;
+      border-bottom: 5px solid transparent;
+    }
+
+    .graph-wrap {
+      position: relative;
+      min-width: 0;
+    }
+
+    .top-bar {
+      position: absolute;
+      top: 16px;
+      left: 18px;
+      right: 18px;
+      z-index: 10;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      pointer-events: none;
+    }
+
+    .top-card {
+      pointer-events: auto;
+      padding: 10px 14px;
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      border-radius: 16px;
+      background: rgba(15, 23, 42, 0.76);
+      box-shadow: 0 18px 48px rgba(0, 0, 0, 0.25);
+      color: #cbd5e1;
+      font-size: 13px;
+    }
+
+    svg {
+      width: 100%;
+      height: 100vh;
+      display: block;
+      cursor: grab;
+    }
+
+    svg.dragging {
+      cursor: grabbing;
+    }
+
+    .edge {
+      stroke: rgba(148, 163, 184, 0.58);
+      stroke-width: 1.7;
+      fill: none;
+      marker-end: url(#arrow);
+      cursor: pointer;
+    }
+
+    .edge:hover,
+    .edge.selected {
+      stroke: var(--selected);
+      stroke-width: 2.7;
+      marker-end: url(#arrow-selected);
+    }
+
+    .edge-label {
+      font-size: 10px;
+      fill: #cbd5e1;
+      paint-order: stroke;
+      stroke: rgba(15, 23, 42, 0.92);
+      stroke-width: 4px;
+      pointer-events: none;
+      user-select: none;
+    }
+
+    .node {
+      cursor: grab;
+    }
+
+    .node.dragging {
+      cursor: grabbing;
+    }
+
+    .node circle,
+    .node rect {
+      stroke: rgba(255, 255, 255, 0.86);
+      stroke-width: 1.5;
+      filter: drop-shadow(0 8px 14px rgba(0, 0, 0, 0.35));
+    }
+
+    .node.selected circle,
+    .node.selected rect {
+      stroke: var(--selected);
+      stroke-width: 3;
+    }
+
+    .node text {
+      pointer-events: none;
+      user-select: none;
+      fill: #f8fafc;
+      font-weight: 650;
+      font-size: 12px;
+      text-anchor: middle;
+      paint-order: stroke;
+      stroke: rgba(15, 23, 42, 0.85);
+      stroke-width: 4px;
+    }
+
+    .node .type-label {
+      fill: #cbd5e1;
+      font-weight: 500;
+      font-size: 10px;
+    }
+
+    .muted {
+      opacity: 0.13;
+    }
+
+    .dimmed {
+      opacity: 0.28;
+    }
+
+    .detail-card {
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      border-radius: 18px;
+      background: rgba(30, 41, 59, 0.58);
+      padding: 14px;
+      margin-top: 12px;
+    }
+
+    .detail-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 18px;
+      font-weight: 750;
+      margin-bottom: 8px;
+    }
+
+    .pill {
+      display: inline-flex;
+      padding: 4px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      color: #0f172a;
+      font-weight: 800;
+      background: #cbd5e1;
+    }
+
+    .kv {
+      display: grid;
+      grid-template-columns: 92px 1fr;
+      gap: 6px 10px;
+      font-size: 12px;
+      margin-top: 12px;
+    }
+
+    .kv .k {
+      color: #94a3b8;
+    }
+
+    .kv .v {
+      color: #e5e7eb;
+      word-break: break-word;
+    }
+
+    .code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      background: rgba(2, 6, 23, 0.62);
+      border: 1px solid rgba(148, 163, 184, 0.16);
+      border-radius: 12px;
+      padding: 10px;
+      color: #dbeafe;
+      font-size: 12px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      margin-top: 10px;
+    }
+
+    .hint {
+      border-left: 3px solid #38bdf8;
+      padding: 8px 10px;
+      color: #cbd5e1;
+      background: rgba(14, 165, 233, 0.08);
+      border-radius: 10px;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .search-box {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      background: rgba(15, 23, 42, 0.9);
+      color: #e5e7eb;
+      outline: none;
+      margin: 10px 0 4px;
+    }
+
+    .search-box:focus {
+      border-color: #60a5fa;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="left-panel">
+      <h1>BOTSv3 安全图模型</h1>
+      <div class="tagline">
+        这是 Schema 级别的可交互图：把日志源抽象成身份、终端、网络、云、邮件、检测和证据层。
+      </div>
+
+      <input id="searchInput" class="search-box" placeholder="搜索节点或关系，例如 process / cloud / CONNECTED_TO" />
+
+      <h2>按层过滤</h2>
+      <div id="layerButtons" class="toolbar"></div>
+
+      <h2>图例</h2>
+      <div id="legend"></div>
+
+      <h2>关系含义</h2>
+      <div class="edge-item"><span class="edge-line"></span><span>有向边：源实体产生行为，目标实体被访问、影响或关联</span></div>
+      <div class="edge-item"><span class="edge-line"></span><span>证据边：Event 保留原始日志出处，避免语义压缩后丢证据</span></div>
+
+      <h2>使用方式</h2>
+      <p>拖动节点可以调整布局。点击节点或关系，会在右侧显示建模解释。搜索框可以高亮相关节点和边。</p>
+      <p>这个图不是具体攻击样本，而是 BOTSv3 这类多源日志最适合落地的统一建模骨架。</p>
+    </aside>
+
+    <main class="graph-wrap">
+      <div class="top-bar">
+        <div class="top-card">核心思想：<b>Event 保证证据，Entity 形成攻击关系链</b></div>
+        <div class="top-card">推荐视角：Identity → Endpoint → Network → Cloud / Message → Detection</div>
+      </div>
+      <svg id="graph" viewBox="0 0 1200 820" aria-label="BOTSv3 security graph model"></svg>
+    </main>
+
+    <aside class="right-panel">
+      <h1>说明面板</h1>
+      <div id="details" class="detail-card">
+        <div class="detail-title">点击一个节点或关系</div>
+        <p>你会看到它表示的安全语义、典型 BOTSv3 sourcetype、以及它在攻击溯源里的作用。</p>
+        <div class="hint">最重要的不是 sourcetype 名字，而是它描述的实体关系：谁，在什么时候，通过什么手段，访问或影响了什么对象。</div>
+      </div>
+
+      <h2>推荐查询路径</h2>
+      <div class="code">User → LOGIN_TO → Host
+Host → RUNS_PROCESS → Process
+Process → SPAWNED → Process
+Process → CONNECTED_TO → IP
+IP → QUERIED_DOMAIN → Domain
+IAMPrincipal → CALLED_API → CloudAPI
+CloudAPI → AFFECTED_RESOURCE → CloudResource</div>
+
+      <h2>三层落地</h2>
+      <p><b>证据图：</b>Event 连接所有原始实体。</p>
+      <p><b>行为图：</b>实体之间形成可学习、可搜索的边。</p>
+      <p><b>攻击片段图：</b>把多条边聚成 phishing、lateral movement、exfiltration 等高阶片段。</p>
+    </aside>
+  </div>
+
+  <script>
+    const layers = {
+      Evidence: { label: "证据层", color: "var(--evidence)", description: "每条原始日志或规范化事件，保留时间、sourcetype、原始字段和证据链。" },
+      Identity: { label: "身份层", color: "var(--identity)", description: "用户、账号、IAM 身份、邮箱等主体。" },
+      Endpoint: { label: "终端层", color: "var(--endpoint)", description: "主机、进程、文件、可执行程序、服务等。" },
+      Network: { label: "网络层", color: "var(--network)", description: "IP、域名、URL、端口和连接关系。" },
+      Cloud: { label: "云资源层", color: "var(--cloud)", description: "AWS / Azure / O365 资源、API、角色和对象访问。" },
+      Message: { label: "邮件层", color: "var(--message)", description: "邮件、发件人、收件人、附件和 URL。" },
+      Detection: { label: "检测层", color: "var(--detection)", description: "EDR、AV、GuardDuty、规则命中的检测结果。" },
+      Asset: { label: "资产状态层", color: "var(--asset)", description: "软件、端口、用户、接口、主机配置等状态快照。" }
+    };
+
+    const nodes = [
+      {
+        id: "Event",
+        label: "Event",
+        layer: "Evidence",
+        x: 600,
+        y: 82,
+        size: 32,
+        shape: "rect",
+        sourcetypes: "所有 sourcetype",
+        meaning: "一条原始日志或规范化事件。它不一定是攻击行为，但一定是证据。",
+        role: "把原始字段、时间、sourcetype、host、source、raw 等信息保留下来。语义边必须能反查 Event。"
+      },
+      {
+        id: "User",
+        label: "User",
+        layer: "Identity",
+        x: 170,
+        y: 205,
+        sourcetypes: "wineventlog, linux_secure, ms:aad:signin, ms:aad:audit",
+        meaning: "真实或逻辑上的使用者，例如域用户、Linux 用户、Azure AD 用户。",
+        role: "身份层核心节点。用于追踪登录、执行、横向移动、权限滥用。"
+      },
+      {
+        id: "Account",
+        label: "Account",
+        layer: "Identity",
+        x: 130,
+        y: 330,
+        sourcetypes: "wineventlog, unix:useraccounts, ms:aad:*",
+        meaning: "账号的具体表示，例如 CORP\\alice、alice@domain、root。",
+        role: "解决同一用户多种账号表示的问题。User 是人/主体，Account 是登录凭据表示。"
+      },
+      {
+        id: "IAMPrincipal",
+        label: "IAMPrincipal",
+        layer: "Identity",
+        x: 235,
+        y: 455,
+        sourcetypes: "aws:cloudtrail, aws:s3:accesslogs",
+        meaning: "AWS IAM User、Role、AssumedRole 等云身份。",
+        role: "云攻击链的主体。用于描述谁调用了 API、访问了 bucket 或对象。"
+      },
+      {
+        id: "EmailAccount",
+        label: "EmailAccount",
+        layer: "Identity",
+        x: 190,
+        y: 600,
+        sourcetypes: "stream:smtp, ms:o365:reporting:messagetrace",
+        meaning: "邮箱地址或邮件系统中的用户身份。",
+        role: "钓鱼入口建模的关键主体。"
+      },
+      {
+        id: "Host",
+        label: "Host",
+        layer: "Endpoint",
+        x: 420,
+        y: 240,
+        sourcetypes: "sysmon, wineventlog, osquery, ps, netstat, lsof, winhostmon",
+        meaning: "终端、服务器、云主机或容器主机。",
+        role: "连接身份、进程、网络和资产状态的核心枢纽。"
+      },
+      {
+        id: "Process",
+        label: "Process",
+        layer: "Endpoint",
+        x: 500,
+        y: 390,
+        sourcetypes: "xmlwineventlog:microsoft-windows-sysmon/operational, ps, symantec:ep:*",
+        meaning: "一次进程实例，不是进程名。推荐 key = host + process_guid。",
+        role: "终端攻击链核心：父子进程、命令行、网络连接、文件访问都围绕它展开。"
+      },
+      {
+        id: "Executable",
+        label: "Executable",
+        layer: "Endpoint",
+        x: 425,
+        y: 535,
+        sourcetypes: "sysmon, osquery, script:installedapps",
+        meaning: "磁盘上的程序镜像，例如 powershell.exe、curl.exe。",
+        role: "和 Process 分开，避免所有 powershell.exe 被错误合并成一次运行。"
+      },
+      {
+        id: "File",
+        label: "File",
+        layer: "Endpoint",
+        x: 590,
+        y: 575,
+        sourcetypes: "sysmon, symantec:ep:*, lsof, code42:*, aws:s3:accesslogs",
+        meaning: "文件、附件、落地载荷、S3 对象等可统一为文件对象。",
+        role: "连接邮件附件、终端落地文件、数据泄露对象和恶意样本。"
+      },
+      {
+        id: "Hash",
+        label: "Hash",
+        layer: "Endpoint",
+        x: 690,
+        y: 705,
+        sourcetypes: "sysmon, symantec:ep:*, osquery",
+        meaning: "文件内容指纹，如 SHA256、SHA1、MD5。",
+        role: "把不同路径、不同机器、不同来源的同一文件关联起来。"
+      },
+      {
+        id: "IP",
+        label: "IP",
+        layer: "Network",
+        x: 760,
+        y: 320,
+        sourcetypes: "stream:tcp, stream:udp, stream:http, stream:dns, cisco:asa, vpcflow",
+        meaning: "源 IP、目的 IP、DNS 回答 IP、云访问来源 IP。",
+        role: "网络访问、登录来源、C2、扫描、云 API 调用来源的公共连接点。"
+      },
+      {
+        id: "Domain",
+        label: "Domain",
+        layer: "Network",
+        x: 875,
+        y: 475,
+        sourcetypes: "stream:dns, stream:http, proxy-like logs",
+        meaning: "DNS 查询域名或 URL 中的域名。",
+        role: "用于 C2、钓鱼链接、恶意基础设施聚类。"
+      },
+      {
+        id: "URL",
+        label: "URL",
+        layer: "Network",
+        x: 1020,
+        y: 385,
+        sourcetypes: "stream:http, access_combined, apache:access, aws:elb:accesslogs",
+        meaning: "HTTP 请求目标。",
+        role: "描述谁访问了哪个 Web 资源，适合还原下载、Webshell、钓鱼跳转。"
+      },
+      {
+        id: "Port",
+        label: "Port",
+        layer: "Network",
+        x: 835,
+        y: 190,
+        sourcetypes: "netstat, openports, stream:tcp, cisco:asa",
+        meaning: "本地监听端口或远程访问端口。",
+        role: "识别服务暴露、扫描、横向移动协议。"
+      },
+      {
+        id: "EmailMessage",
+        label: "EmailMessage",
+        layer: "Message",
+        x: 315,
+        y: 690,
+        sourcetypes: "stream:smtp, ms:o365:reporting:messagetrace",
+        meaning: "一封邮件。",
+        role: "把发件人、收件人、附件、URL 串成钓鱼入口链。"
+      },
+      {
+        id: "CloudAPI",
+        label: "CloudAPI",
+        layer: "Cloud",
+        x: 970,
+        y: 620,
+        sourcetypes: "aws:cloudtrail",
+        meaning: "云 API 动作，例如 ListBuckets、GetObject、PutBucketAcl。",
+        role: "把云行为序列显式化，便于学习 API 调用链。"
+      },
+      {
+        id: "CloudResource",
+        label: "CloudResource",
+        layer: "Cloud",
+        x: 1090,
+        y: 720,
+        sourcetypes: "aws:cloudtrail, aws:s3:accesslogs, aws:config:rule",
+        meaning: "S3 bucket、S3 object、EC2、RDS、IAM policy 等云资源。",
+        role: "云攻击目标或被修改对象。"
+      },
+      {
+        id: "Detection",
+        label: "Detection",
+        layer: "Detection",
+        x: 650,
+        y: 185,
+        sourcetypes: "symantec:ep:risk:file, symantec:ep:security:file, aws:cloudwatch:guardduty",
+        meaning: "检测结果、告警、风险、规则命中。",
+        role: "表示安全产品的判断。不要直接等同于事实，应当作为证据节点。"
+      },
+      {
+        id: "Technique",
+        label: "Technique",
+        layer: "Detection",
+        x: 1010,
+        y: 105,
+        sourcetypes: "规则映射、人工标注、后处理结果",
+        meaning: "攻击技术标签，例如 phishing、lateral movement、exfiltration。",
+        role: "把低层事件聚合到战术技术层，服务攻击链解释。"
+      },
+      {
+        id: "Software",
+        label: "Software",
+        layer: "Asset",
+        x: 535,
+        y: 130,
+        sourcetypes: "script:installedapps, osquery:results",
+        meaning: "已安装软件或包。",
+        role: "主机上下文：判断某行为是正常软件活动还是异常新出现工具。"
+      },
+      {
+        id: "Service",
+        label: "Service",
+        layer: "Asset",
+        x: 320,
+        y: 110,
+        sourcetypes: "osquery:results, winhostmon, unix:service",
+        meaning: "系统服务、守护进程、计划服务。",
+        role: "解释监听端口、持久化、服务创建。"
+      }
+    ];
+
+    const edges = [
+      { id: "e1", source: "Event", target: "Host", label: "OBSERVED_ON", group: "evidence", meaning: "该事件发生或被观测在某台主机上。", sourcetypes: "所有主机相关日志" },
+      { id: "e2", source: "Event", target: "User", label: "ACTOR", group: "evidence", meaning: "该事件的主体是某个用户。", sourcetypes: "认证、进程、云审计、邮件日志" },
+      { id: "e3", source: "Event", target: "Process", label: "USED", group: "evidence", meaning: "该事件中使用或涉及某个进程。", sourcetypes: "sysmon, symantec, ps" },
+      { id: "e4", source: "Event", target: "IP", label: "TARGET/SRC", group: "evidence", meaning: "该事件中涉及源 IP 或目标 IP。", sourcetypes: "stream:*, cisco:asa, cloudtrail" },
+      { id: "e5", source: "Event", target: "Detection", label: "GENERATES", group: "evidence", meaning: "某条事件触发检测、告警或风险记录。", sourcetypes: "symantec:ep:*, guardduty" },
+
+      { id: "e6", source: "User", target: "Account", label: "USES_ACCOUNT", group: "identity", meaning: "用户和具体账号表示之间的归一化关系。", sourcetypes: "wineventlog, unix:useraccounts, aad" },
+      { id: "e7", source: "User", target: "Host", label: "LOGIN_TO", group: "identity", meaning: "用户登录到主机。可包含 success、logon_type、src_ip 等属性。", sourcetypes: "wineventlog, linux_secure, aad signin" },
+      { id: "e8", source: "IP", target: "User", label: "LOGIN_AS", group: "identity", meaning: "某个 IP 以某用户身份发起登录。", sourcetypes: "wineventlog, linux_secure, aad signin" },
+      { id: "e9", source: "User", target: "Process", label: "EXECUTED", group: "endpoint", meaning: "用户启动或拥有某个进程实例。", sourcetypes: "sysmon, wineventlog, ps" },
+
+      { id: "e10", source: "Host", target: "Process", label: "RUNS_PROCESS", group: "endpoint", meaning: "主机上运行了某个进程实例。", sourcetypes: "sysmon, ps, osquery" },
+      { id: "e11", source: "Process", target: "Process", label: "SPAWNED", group: "endpoint", meaning: "父进程创建子进程，是进程树核心边。", sourcetypes: "sysmon Event ID 1" },
+      { id: "e12", source: "Process", target: "Executable", label: "HAS_IMAGE", group: "endpoint", meaning: "进程实例对应的磁盘镜像。", sourcetypes: "sysmon, osquery, ps" },
+      { id: "e13", source: "Process", target: "File", label: "READ/WRITE/CREATE", group: "endpoint", meaning: "进程读写、创建或删除文件。", sourcetypes: "sysmon, symantec, lsof" },
+      { id: "e14", source: "File", target: "Hash", label: "HAS_HASH", group: "endpoint", meaning: "文件内容指纹。用于跨主机、跨邮件、跨云对象关联。", sourcetypes: "sysmon, symantec" },
+
+      { id: "e15", source: "Process", target: "IP", label: "CONNECTED_TO", group: "network", meaning: "进程发起网络连接。是 C2、下载、横向移动的重要边。", sourcetypes: "sysmon Event ID 3, stream:tcp" },
+      { id: "e16", source: "Host", target: "IP", label: "HAS_INTERFACE", group: "asset", meaning: "主机拥有某个网络地址。需要时间范围，避免 DHCP/云 IP 复用误判。", sourcetypes: "interfaces, osquery, winhostmon" },
+      { id: "e17", source: "Host", target: "Port", label: "LISTENS_ON", group: "asset", meaning: "主机监听端口。用于识别暴露服务和横向移动入口。", sourcetypes: "netstat, openports, script:listeningports" },
+      { id: "e18", source: "IP", target: "Domain", label: "QUERIED_DOMAIN", group: "network", meaning: "某 IP 查询某域名。", sourcetypes: "stream:dns" },
+      { id: "e19", source: "Domain", target: "IP", label: "RESOLVED_TO", group: "network", meaning: "域名解析到 IP。", sourcetypes: "stream:dns" },
+      { id: "e20", source: "IP", target: "URL", label: "REQUESTED_URL", group: "network", meaning: "某 IP 访问某 HTTP URL。", sourcetypes: "stream:http, access_combined, elb accesslogs" },
+      { id: "e21", source: "URL", target: "Domain", label: "HAS_DOMAIN", group: "network", meaning: "URL 中包含域名。", sourcetypes: "stream:http" },
+
+      { id: "e22", source: "EmailAccount", target: "EmailMessage", label: "SENT_EMAIL", group: "message", meaning: "邮箱账号发送邮件。", sourcetypes: "stream:smtp, o365 message trace" },
+      { id: "e23", source: "EmailMessage", target: "EmailAccount", label: "RECEIVED_BY", group: "message", meaning: "邮件被某邮箱接收。", sourcetypes: "stream:smtp, o365 message trace" },
+      { id: "e24", source: "EmailMessage", target: "File", label: "HAS_ATTACHMENT", group: "message", meaning: "邮件携带附件。附件可以继续关联落地文件和 hash。", sourcetypes: "stream:smtp, o365 message trace" },
+      { id: "e25", source: "EmailMessage", target: "URL", label: "CONTAINS_URL", group: "message", meaning: "邮件正文或附件中包含链接。", sourcetypes: "stream:smtp, o365" },
+
+      { id: "e26", source: "IAMPrincipal", target: "CloudAPI", label: "CALLED_API", group: "cloud", meaning: "IAM 身份调用云 API。", sourcetypes: "aws:cloudtrail" },
+      { id: "e27", source: "IP", target: "IAMPrincipal", label: "USED_CREDENTIAL", group: "cloud", meaning: "某 IP 使用某云身份凭证发起 API 调用。", sourcetypes: "aws:cloudtrail" },
+      { id: "e28", source: "CloudAPI", target: "CloudResource", label: "AFFECTED_RESOURCE", group: "cloud", meaning: "API 调用影响某个云资源。", sourcetypes: "aws:cloudtrail" },
+      { id: "e29", source: "IAMPrincipal", target: "CloudResource", label: "ACCESSED_OBJECT", group: "cloud", meaning: "云身份访问对象存储、数据库或其他资源。", sourcetypes: "aws:s3:accesslogs, rds audit" },
+
+      { id: "e30", source: "Detection", target: "File", label: "FLAGS", group: "detection", meaning: "检测结果标记某文件。", sourcetypes: "symantec:ep:risk:file" },
+      { id: "e31", source: "Detection", target: "IP", label: "FLAGS", group: "detection", meaning: "检测结果标记某 IP。", sourcetypes: "guardduty, symantec traffic" },
+      { id: "e32", source: "Detection", target: "Technique", label: "MAPS_TO", group: "detection", meaning: "检测或行为片段映射到攻击技术。", sourcetypes: "规则后处理、人工标注" },
+
+      { id: "e33", source: "Host", target: "Software", label: "HAS_SOFTWARE", group: "asset", meaning: "主机安装了某软件。", sourcetypes: "script:installedapps, osquery" },
+      { id: "e34", source: "Host", target: "Service", label: "HAS_SERVICE", group: "asset", meaning: "主机拥有某服务或守护进程。", sourcetypes: "osquery, winhostmon" },
+      { id: "e35", source: "Service", target: "Port", label: "BINDS_PORT", group: "asset", meaning: "服务绑定或监听某端口。", sourcetypes: "netstat, openports" }
+    ];
+
+    const svg = document.getElementById("graph");
+    const details = document.getElementById("details");
+    const searchInput = document.getElementById("searchInput");
+    const ns = "http://www.w3.org/2000/svg";
+    const state = {
+      selectedLayer: "All",
+      selectedNodeId: null,
+      selectedEdgeId: null,
+      draggingNode: null,
+      offsetX: 0,
+      offsetY: 0,
+      query: ""
+    };
+
+    const nodeById = new Map(nodes.map(node => [node.id, node]));
+
+    function cssVar(name) {
+      return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    }
+
+    function colorForLayer(layer) {
+      const color = layers[layer].color;
+      if (color.startsWith("var(")) {
+        const variableName = color.slice(4, -1);
+        return cssVar(variableName);
+      }
+      return color;
+    }
+
+    function createSvgElement(tag, attrs = {}) {
+      const el = document.createElementNS(ns, tag);
+      for (const [key, value] of Object.entries(attrs)) {
+        el.setAttribute(key, value);
+      }
+      return el;
+    }
+
+    function initControls() {
+      const layerButtons = document.getElementById("layerButtons");
+      const allButton = document.createElement("button");
+      allButton.textContent = "全部";
+      allButton.className = "active";
+      allButton.onclick = () => selectLayer("All");
+      layerButtons.appendChild(allButton);
+
+      Object.entries(layers).forEach(([key, layer]) => {
+        const button = document.createElement("button");
+        button.textContent = layer.label;
+        button.onclick = () => selectLayer(key);
+        button.dataset.layer = key;
+        layerButtons.appendChild(button);
+      });
+
+      const legend = document.getElementById("legend");
+      Object.entries(layers).forEach(([key, layer]) => {
+        const item = document.createElement("div");
+        item.className = "legend-item";
+        const dot = document.createElement("span");
+        dot.className = "dot";
+        dot.style.background = colorForLayer(key);
+        const text = document.createElement("span");
+        text.textContent = `${layer.label}：${layer.description}`;
+        item.appendChild(dot);
+        item.appendChild(text);
+        legend.appendChild(item);
+      });
+    }
+
+    function selectLayer(layer) {
+      state.selectedLayer = layer;
+      document.querySelectorAll("#layerButtons button").forEach(button => {
+        const isActive = (layer === "All" && !button.dataset.layer) || button.dataset.layer === layer;
+        button.classList.toggle("active", isActive);
+      });
+      updateVisibility();
+    }
+
+    function render() {
+      svg.innerHTML = "";
+
+      const defs = createSvgElement("defs");
+      defs.innerHTML = `
+        <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L0,6 L9,3 z" fill="rgba(148, 163, 184, 0.75)"></path>
+        </marker>
+        <marker id="arrow-selected" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L0,6 L9,3 z" fill="#facc15"></path>
+        </marker>
+      `;
+      svg.appendChild(defs);
+
+      const edgeLayer = createSvgElement("g", { id: "edgeLayer" });
+      const edgeLabelLayer = createSvgElement("g", { id: "edgeLabelLayer" });
+      const nodeLayer = createSvgElement("g", { id: "nodeLayer" });
+      svg.appendChild(edgeLayer);
+      svg.appendChild(edgeLabelLayer);
+      svg.appendChild(nodeLayer);
+
+      edges.forEach(edge => {
+        const line = createSvgElement("path", {
+          class: "edge",
+          id: `edge-${edge.id}`,
+          "data-edge-id": edge.id
+        });
+        line.addEventListener("click", evt => {
+          evt.stopPropagation();
+          selectEdge(edge.id);
+        });
+        edgeLayer.appendChild(line);
+
+        const label = createSvgElement("text", {
+          class: "edge-label",
+          id: `edge-label-${edge.id}`,
+          "data-edge-id": edge.id
+        });
+        label.textContent = edge.label;
+        edgeLabelLayer.appendChild(label);
+      });
+
+      nodes.forEach(node => {
+        const group = createSvgElement("g", {
+          class: "node",
+          id: `node-${node.id}`,
+          "data-node-id": node.id
+        });
+
+        const color = colorForLayer(node.layer);
+        if (node.shape === "rect") {
+          group.appendChild(createSvgElement("rect", {
+            x: -58,
+            y: -26,
+            width: 116,
+            height: 52,
+            rx: 16,
+            fill: color
+          }));
+        } else {
+          group.appendChild(createSvgElement("circle", {
+            r: node.size || 28,
+            fill: color
+          }));
+        }
+
+        const label = createSvgElement("text", { y: -2 });
+        label.textContent = node.label;
+        group.appendChild(label);
+
+        const typeLabel = createSvgElement("text", { y: 15, class: "type-label" });
+        typeLabel.textContent = layers[node.layer].label;
+        group.appendChild(typeLabel);
+
+        group.addEventListener("mousedown", evt => startDrag(evt, node.id));
+        group.addEventListener("click", evt => {
+          evt.stopPropagation();
+          selectNode(node.id);
+        });
+        nodeLayer.appendChild(group);
+      });
+
+      svg.addEventListener("mousemove", onDrag);
+      svg.addEventListener("mouseup", stopDrag);
+      svg.addEventListener("mouseleave", stopDrag);
+      svg.addEventListener("click", clearSelection);
+      searchInput.addEventListener("input", () => {
+        state.query = searchInput.value.trim().toLowerCase();
+        updateVisibility();
+      });
+
+      updatePositions();
+      updateVisibility();
+    }
+
+    function edgePath(source, target) {
+      const dx = target.x - source.x;
+      const dy = target.y - source.y;
+      const distance = Math.sqrt(dx * dx + dy * dy) || 1;
+      const sourceRadius = source.shape === "rect" ? 42 : (source.size || 28);
+      const targetRadius = target.shape === "rect" ? 46 : (target.size || 28);
+      const sx = source.x + (dx / distance) * sourceRadius;
+      const sy = source.y + (dy / distance) * sourceRadius;
+      const tx = target.x - (dx / distance) * targetRadius;
+      const ty = target.y - (dy / distance) * targetRadius;
+      const curve = Math.min(80, distance * 0.18);
+      const nx = -dy / distance;
+      const ny = dx / distance;
+      const mx = (sx + tx) / 2 + nx * curve * curveDirection(source.id, target.id);
+      const my = (sy + ty) / 2 + ny * curve * curveDirection(source.id, target.id);
+      return { d: `M ${sx} ${sy} Q ${mx} ${my} ${tx} ${ty}`, mx, my };
+    }
+
+    function curveDirection(sourceId, targetId) {
+      const key = `${sourceId}->${targetId}`;
+      let total = 0;
+      for (let i = 0; i < key.length; i += 1) {
+        total += key.charCodeAt(i);
+      }
+      return total % 2 === 0 ? 1 : -1;
+    }
+
+    function updatePositions() {
+      nodes.forEach(node => {
+        const group = document.getElementById(`node-${node.id}`);
+        if (group) {
+          group.setAttribute("transform", `translate(${node.x}, ${node.y})`);
+        }
+      });
+
+      edges.forEach(edge => {
+        const source = nodeById.get(edge.source);
+        const target = nodeById.get(edge.target);
+        const pathInfo = edgePath(source, target);
+        const path = document.getElementById(`edge-${edge.id}`);
+        const label = document.getElementById(`edge-label-${edge.id}`);
+        if (path) {
+          path.setAttribute("d", pathInfo.d);
+        }
+        if (label) {
+          label.setAttribute("x", pathInfo.mx);
+          label.setAttribute("y", pathInfo.my - 4);
+        }
+      });
+    }
+
+    function getMousePosition(evt) {
+      const point = svg.createSVGPoint();
+      point.x = evt.clientX;
+      point.y = evt.clientY;
+      return point.matrixTransform(svg.getScreenCTM().inverse());
+    }
+
+    function startDrag(evt, nodeId) {
+      const node = nodeById.get(nodeId);
+      const pos = getMousePosition(evt);
+      state.draggingNode = node;
+      state.offsetX = pos.x - node.x;
+      state.offsetY = pos.y - node.y;
+      svg.classList.add("dragging");
+      document.getElementById(`node-${nodeId}`).classList.add("dragging");
+    }
+
+    function onDrag(evt) {
+      if (!state.draggingNode) {
+        return;
+      }
+      const pos = getMousePosition(evt);
+      state.draggingNode.x = Math.max(40, Math.min(1160, pos.x - state.offsetX));
+      state.draggingNode.y = Math.max(40, Math.min(780, pos.y - state.offsetY));
+      updatePositions();
+    }
+
+    function stopDrag() {
+      if (state.draggingNode) {
+        const nodeEl = document.getElementById(`node-${state.draggingNode.id}`);
+        if (nodeEl) {
+          nodeEl.classList.remove("dragging");
+        }
+      }
+      state.draggingNode = null;
+      svg.classList.remove("dragging");
+    }
+
+    function selectNode(nodeId) {
+      state.selectedNodeId = nodeId;
+      state.selectedEdgeId = null;
+      updateSelectionStyles();
+      showNodeDetails(nodeById.get(nodeId));
+    }
+
+    function selectEdge(edgeId) {
+      state.selectedEdgeId = edgeId;
+      state.selectedNodeId = null;
+      updateSelectionStyles();
+      showEdgeDetails(edges.find(edge => edge.id === edgeId));
+    }
+
+    function clearSelection() {
+      state.selectedNodeId = null;
+      state.selectedEdgeId = null;
+      updateSelectionStyles();
+      details.innerHTML = `
+        <div class="detail-title">点击一个节点或关系</div>
+        <p>你会看到它表示的安全语义、典型 BOTSv3 sourcetype、以及它在攻击溯源里的作用。</p>
+        <div class="hint">最重要的不是 sourcetype 名字，而是它描述的实体关系：谁，在什么时候，通过什么手段，访问或影响了什么对象。</div>
+      `;
+    }
+
+    function updateSelectionStyles() {
+      nodes.forEach(node => {
+        const el = document.getElementById(`node-${node.id}`);
+        if (el) {
+          el.classList.toggle("selected", node.id === state.selectedNodeId);
+        }
+      });
+      edges.forEach(edge => {
+        const el = document.getElementById(`edge-${edge.id}`);
+        if (el) {
+          el.classList.toggle("selected", edge.id === state.selectedEdgeId);
+        }
+      });
+      updateVisibility();
+    }
+
+    function showNodeDetails(node) {
+      details.innerHTML = `
+        <div class="detail-title">
+          <span class="dot" style="background:${colorForLayer(node.layer)}"></span>
+          ${node.label}
+        </div>
+        <span class="pill">${layers[node.layer].label}</span>
+        <p>${node.meaning}</p>
+        <div class="hint">${node.role}</div>
+        <div class="kv">
+          <div class="k">节点类型</div><div class="v">${node.id}</div>
+          <div class="k">所属层</div><div class="v">${layers[node.layer].label}</div>
+          <div class="k">典型来源</div><div class="v">${node.sourcetypes}</div>
+        </div>
+        <div class="code">建模建议：\n${nodeModelAdvice(node)}</div>
+      `;
+    }
+
+    function showEdgeDetails(edge) {
+      const source = nodeById.get(edge.source);
+      const target = nodeById.get(edge.target);
+      details.innerHTML = `
+        <div class="detail-title">${edge.label}</div>
+        <span class="pill">关系边</span>
+        <p>${edge.meaning}</p>
+        <div class="kv">
+          <div class="k">源节点</div><div class="v">${source.label} / ${layers[source.layer].label}</div>
+          <div class="k">目标节点</div><div class="v">${target.label} / ${layers[target.layer].label}</div>
+          <div class="k">典型来源</div><div class="v">${edge.sourcetypes}</div>
+        </div>
+        <div class="code">(${source.label}) -[:${edge.label} {\n  time,\n  sourcetype,\n  evidence_event_id,\n  confidence\n}]-> (${target.label})</div>
+      `;
+    }
+
+    function nodeModelAdvice(node) {
+      const advice = {
+        Event: "必须保留 raw、timestamp、sourcetype、source、host、index、抽取字段。所有语义边都要能回指 Event。",
+        User: "不要把 alice、CORP\\alice、alice@domain 强行当三个用户。建议 User 与 Account 分离。",
+        Account: "Account 表示登录凭据或账号字符串，User 表示归一化主体。",
+        IAMPrincipal: "建议保留 arn、type、account_id、access_key_id、session_issuer、mfa 信息。",
+        EmailAccount: "邮箱最好归一化大小写，并关联 User。外部邮箱和内部邮箱要区分。",
+        Host: "Host 节点要合并 hostname、fqdn、instance_id、mac、ip，并维护 first_seen / last_seen。",
+        Process: "Process 必须是实例级节点。优先用 ProcessGuid；没有则用 host + pid + image + start_time。",
+        Executable: "Executable 是文件镜像，不是一次运行。可挂 path、hash、publisher、signed 等属性。",
+        File: "File 可代表路径文件、附件、S3 对象。强溯源时建议 FilePath、FileObject、Hash 拆开。",
+        Hash: "Hash 是跨来源关联点：邮件附件、落地文件、EDR 告警、S3 对象都能接到它。",
+        IP: "IP 需要和时间、Host、云资源上下文一起看，尤其内网 IP 会复用。",
+        Domain: "Domain 适合做 C2、钓鱼、恶意基础设施聚类。建议保留 registrable_domain。",
+        URL: "URL 粒度比 Domain 更细，适合还原下载路径、Webshell 路径、钓鱼链接。",
+        Port: "Port 通常可做边属性；当你关心开放服务和暴露面时，再独立成节点。",
+        EmailMessage: "保留 message_id、subject、sender、recipient、attachment、url、delivery_time。",
+        CloudAPI: "API 动作建成节点，有利于学习云攻击序列，而不只是边属性。",
+        CloudResource: "保留 resource_type、arn、bucket、object_key、region、account_id。",
+        Detection: "Detection 是安全产品的判断，不等价于事实。要连接被标记实体和证据 Event。",
+        Technique: "Technique 适合做高层标签，例如 MITRE ATT&CK 技术或自定义攻击阶段。",
+        Software: "资产状态节点，主要用于上下文，不应和进程执行事件混为一谈。",
+        Service: "服务节点可用于持久化、开机自启、监听端口等分析。"
+      };
+      return advice[node.id] || "保留时间、来源、证据 Event，并避免过度合并实体。";
+    }
+
+    function updateVisibility() {
+      const query = state.query;
+      const selectedLayer = state.selectedLayer;
+      const relatedNodeIds = new Set();
+      if (state.selectedNodeId) {
+        edges.forEach(edge => {
+          if (edge.source === state.selectedNodeId || edge.target === state.selectedNodeId) {
+            relatedNodeIds.add(edge.source);
+            relatedNodeIds.add(edge.target);
+          }
+        });
+      }
+      if (state.selectedEdgeId) {
+        const edge = edges.find(item => item.id === state.selectedEdgeId);
+        if (edge) {
+          relatedNodeIds.add(edge.source);
+          relatedNodeIds.add(edge.target);
+        }
+      }
+
+      function matchesNode(node) {
+        const text = `${node.id} ${node.label} ${node.layer} ${node.sourcetypes} ${node.meaning}`.toLowerCase();
+        return !query || text.includes(query);
+      }
+
+      function matchesEdge(edge) {
+        const text = `${edge.label} ${edge.sourcetypes} ${edge.meaning} ${edge.source} ${edge.target}`.toLowerCase();
+        return !query || text.includes(query);
+      }
+
+      const visibleNodeIds = new Set();
+      nodes.forEach(node => {
+        const layerOk = selectedLayer === "All" || node.layer === selectedLayer;
+        const queryOk = matchesNode(node);
+        const connectedByMatchedEdge = edges.some(edge => matchesEdge(edge) && (edge.source === node.id || edge.target === node.id));
+        const visible = layerOk && (queryOk || connectedByMatchedEdge || !query);
+        if (visible) {
+          visibleNodeIds.add(node.id);
+        }
+      });
+
+      edges.forEach(edge => {
+        const edgeEl = document.getElementById(`edge-${edge.id}`);
+        const labelEl = document.getElementById(`edge-label-${edge.id}`);
+        const source = nodeById.get(edge.source);
+        const target = nodeById.get(edge.target);
+        const layerOk = selectedLayer === "All" || source.layer === selectedLayer || target.layer === selectedLayer;
+        const queryOk = matchesEdge(edge) || matchesNode(source) || matchesNode(target) || !query;
+        const visible = layerOk && queryOk;
+        const selectedRelated = relatedNodeIds.has(edge.source) && relatedNodeIds.has(edge.target);
+        [edgeEl, labelEl].forEach(el => {
+          if (!el) {
+            return;
+          }
+          el.style.display = visible ? "" : "none";
+          el.classList.toggle("dimmed", Boolean(state.selectedNodeId || state.selectedEdgeId) && !selectedRelated);
+        });
+      });
+
+      nodes.forEach(node => {
+        const nodeEl = document.getElementById(`node-${node.id}`);
+        if (!nodeEl) {
+          return;
+        }
+        const layerOk = selectedLayer === "All" || node.layer === selectedLayer;
+        const queryOk = matchesNode(node) || edges.some(edge => matchesEdge(edge) && (edge.source === node.id || edge.target === node.id)) || !query;
+        const visible = layerOk && queryOk;
+        nodeEl.style.display = visible ? "" : "none";
+        const shouldDim = Boolean(state.selectedNodeId || state.selectedEdgeId) && !relatedNodeIds.has(node.id) && node.id !== state.selectedNodeId;
+        nodeEl.classList.toggle("dimmed", shouldDim);
+      });
+    }
+
+    initControls();
+    render();
+  </script>
+</body>
+</html>
