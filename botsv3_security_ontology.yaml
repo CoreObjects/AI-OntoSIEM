@@ -1,0 +1,1418 @@
+ontology:
+  name: BOTSv3SecurityOntology
+  version: 0.1.0
+  language: zh-CN
+  purpose: >
+    描述 BOTSv3 这类多源安全日志如何被统一建模为时间异构安全事件图。
+    该本体面向攻击溯源、威胁狩猎、安全知识图谱、GNN 建模和 SOC Agent 推理。
+  scope:
+    includes:
+      - identity telemetry
+      - endpoint telemetry
+      - network telemetry
+      - cloud audit telemetry
+      - email telemetry
+      - asset state telemetry
+      - detection and alert telemetry
+      - raw evidence event layer
+    excludes:
+      - vendor-specific raw field exhaustive schema
+      - full MITRE ATT&CK ontology
+      - full STIX/TAXII object model
+      - packet-level payload reconstruction
+
+modeling_principles:
+  - id: preserve_evidence
+    statement: >
+      所有语义节点和关系都必须能够回溯到原始 Event，避免把日志压缩成关系后丢失证据来源。
+  - id: separate_event_and_fact
+    statement: >
+      Event 是观测证据，RelationFact 是从 Event 中抽取出的安全事实。告警 Detection 也是证据，不直接等于恶意事实。
+  - id: process_instance_not_process_name
+    statement: >
+      Process 表示一次进程实例，而不是进程名。powershell.exe 这类程序镜像应建为 Executable。
+  - id: identity_resolution
+    statement: >
+      User 表示归一化主体，Account 表示具体账号字符串或凭据表示，例如 CORP\\alice、alice@example.com、root。
+  - id: temporal_first
+    statement: >
+      所有行为关系都必须带时间字段。网络流量可按时间窗口聚合，登录、进程、云 API、文件关键事件默认不聚合。
+  - id: sourcetype_as_evidence_not_type
+    statement: >
+      Splunk sourcetype 是证据来源，不应该直接作为节点类型或业务类型。
+
+layers:
+  Evidence:
+    name: 证据层
+    description: 原始日志、规范化事件、证据来源。
+  Identity:
+    name: 身份层
+    description: 用户、账号、邮箱、IAM 主体、角色等行为主体。
+  Endpoint:
+    name: 终端层
+    description: 主机、进程、文件、可执行程序、服务等终端实体。
+  Network:
+    name: 网络层
+    description: IP、域名、URL、端口、网络连接和解析关系。
+  Cloud:
+    name: 云资源层
+    description: 云 API、云身份、S3、EC2、RDS、IAM policy 等云资源与操作。
+  Message:
+    name: 邮件层
+    description: 邮件消息、发件人、收件人、附件和邮件 URL。
+  AssetState:
+    name: 资产状态层
+    description: 软件、端口、接口、用户、服务、系统配置等状态快照。
+  Detection:
+    name: 检测层
+    description: EDR、AV、IDS、GuardDuty、规则告警和攻击技术映射。
+
+common_properties:
+  entity:
+    id:
+      type: string
+      required: true
+      description: 全局唯一实体 ID。
+    type:
+      type: string
+      required: true
+      description: 节点类型。
+    first_seen:
+      type: datetime
+      required: false
+      description: 第一次观测时间。
+    last_seen:
+      type: datetime
+      required: false
+      description: 最近一次观测时间。
+    source_sourcetypes:
+      type: list[string]
+      required: false
+      description: 支持该实体的日志来源类型。
+    confidence:
+      type: float
+      required: false
+      description: 实体归一化置信度，范围 0 到 1。
+  relation:
+    id:
+      type: string
+      required: true
+      description: 全局唯一关系 ID。
+    type:
+      type: string
+      required: true
+      description: 关系类型。
+    event_time:
+      type: datetime
+      required: false
+      description: 行为发生时间。
+    start_time:
+      type: datetime
+      required: false
+      description: 聚合关系的开始时间。
+    end_time:
+      type: datetime
+      required: false
+      description: 聚合关系的结束时间。
+    count:
+      type: integer
+      required: false
+      description: 聚合窗口内观测次数。
+    evidence_event_ids:
+      type: list[string]
+      required: true
+      description: 支撑该关系的 Event ID 列表。
+    sourcetypes:
+      type: list[string]
+      required: true
+      description: 支撑该关系的日志类型。
+    confidence:
+      type: float
+      required: false
+      description: 关系抽取置信度，范围 0 到 1。
+
+node_types:
+  Event:
+    layer: Evidence
+    description: 一条原始日志或规范化事件。它是证据，不一定是攻击行为。
+    key_strategy: event_id 或 sourcetype + source + _time + raw_hash
+    properties:
+      event_id: string
+      timestamp: datetime
+      sourcetype: string
+      source: string
+      index: string
+      host: string
+      raw: string
+      raw_hash: string
+      normalized_event_type: string
+      extracted_fields: map
+    source_sourcetypes:
+      - all
+    notes:
+      - 所有语义节点和关系应能回溯到 Event。
+      - Event 可连接多个实体，例如 User、Host、Process、IP、File、CloudResource。
+
+  User:
+    layer: Identity
+    description: 归一化用户主体，可以对应自然人、服务主体或逻辑用户。
+    key_strategy: normalized_user_id
+    properties:
+      normalized_user_id: string
+      display_name: string
+      domain: string
+      email: string
+      is_service_user: boolean
+      risk_score: float
+    source_sourcetypes:
+      - wineventlog
+      - linux_secure
+      - ms:aad:signin
+      - ms:aad:audit
+      - unix:useraccounts
+    notes:
+      - 不要把 alice、CORP\\alice、alice@example.com 当作天然不同用户。
+      - 与 Account 分离，Account 负责记录具体账号表示。
+
+  Account:
+    layer: Identity
+    description: 具体账号、登录名、凭据表示或安全主体字符串。
+    key_strategy: account_namespace + account_name
+    properties:
+      account_name: string
+      account_namespace: string
+      account_type: enum[local, domain, cloud, service, unknown]
+      raw_identifier: string
+      sid: string
+      uid: string
+    source_sourcetypes:
+      - wineventlog
+      - linux_secure
+      - unix:useraccounts
+      - ms:aad:signin
+      - aws:cloudtrail
+
+  Group:
+    layer: Identity
+    description: 用户组、权限组或角色组。
+    key_strategy: group_namespace + group_name
+    properties:
+      group_name: string
+      group_namespace: string
+      group_type: enum[windows_group, linux_group, aad_group, iam_group, unknown]
+    source_sourcetypes:
+      - wineventlog
+      - unix:useraccounts
+      - ms:aad:audit
+      - aws:cloudtrail
+
+  IAMPrincipal:
+    layer: Identity
+    description: AWS IAM User、Role、AssumedRole、FederatedUser 等云身份。
+    key_strategy: arn 或 account_id + principal_id
+    properties:
+      arn: string
+      principal_id: string
+      account_id: string
+      principal_type: enum[IAMUser, Role, AssumedRole, FederatedUser, Root, Unknown]
+      access_key_id: string
+      session_issuer: string
+      mfa_authenticated: boolean
+    source_sourcetypes:
+      - aws:cloudtrail
+      - aws:s3:accesslogs
+
+  EmailAccount:
+    layer: Identity
+    description: 邮箱账号，既可以是内部员工邮箱，也可以是外部发件人。
+    key_strategy: lower(email_address)
+    properties:
+      email_address: string
+      domain: string
+      is_internal: boolean
+      linked_user_id: string
+    source_sourcetypes:
+      - stream:smtp
+      - ms:o365:reporting:messagetrace
+      - o365:management:activity
+
+  Host:
+    layer: Endpoint
+    description: 终端、服务器、云主机或虚拟机。
+    key_strategy: asset_id 优先，其次 hostname/fqdn + stable identifiers
+    properties:
+      hostname: string
+      fqdn: string
+      asset_id: string
+      instance_id: string
+      os: string
+      mac_addresses: list[string]
+      ip_addresses: list[string]
+      owner: string
+      environment: enum[workstation, server, cloud, container, unknown]
+    source_sourcetypes:
+      - xmlwineventlog:microsoft-windows-sysmon/operational
+      - wineventlog
+      - osquery:results
+      - winhostmon
+      - ps
+      - netstat
+      - lsof
+      - aws:description
+    notes:
+      - IP 不应直接等同 Host，必须通过 HAD_IP 或 HAS_INTERFACE 并带时间范围。
+
+  Process:
+    layer: Endpoint
+    description: 一次进程运行实例。
+    key_strategy: host_id + process_guid；若无 guid，则 host_id + pid + image + start_time_window
+    properties:
+      process_guid: string
+      pid: integer
+      ppid: integer
+      image: string
+      command_line: string
+      current_directory: string
+      user: string
+      integrity_level: string
+      start_time: datetime
+      end_time: datetime
+    source_sourcetypes:
+      - xmlwineventlog:microsoft-windows-sysmon/operational
+      - ps
+      - osquery:results
+      - symantec:ep:*
+    notes:
+      - Process 不是 powershell.exe 这个程序名，而是某台机器上某一时刻的一次运行。
+
+  Executable:
+    layer: Endpoint
+    description: 磁盘上的可执行镜像或脚本解释器。
+    key_strategy: path + hash 优先；无 hash 时用 normalized_path + filename
+    properties:
+      path: string
+      filename: string
+      extension: string
+      publisher: string
+      signed: boolean
+      signature_status: string
+      hash_id: string
+    source_sourcetypes:
+      - sysmon
+      - osquery:results
+      - script:installedapps
+
+  File:
+    layer: Endpoint
+    description: 文件、邮件附件、落地载荷、S3 Object 或可下载对象的统一抽象。
+    key_strategy: host_id + path 或 storage_uri；跨源关联用 hash
+    properties:
+      path: string
+      filename: string
+      extension: string
+      size: integer
+      mime_type: string
+      storage_uri: string
+      object_key: string
+      hash_id: string
+    source_sourcetypes:
+      - sysmon
+      - symantec:ep:*
+      - lsof
+      - code42:*
+      - aws:s3:accesslogs
+      - stream:smtp
+    notes:
+      - 强溯源场景可以进一步拆成 FilePath、FileObject、Hash。
+
+  Hash:
+    layer: Endpoint
+    description: 文件内容指纹。
+    key_strategy: algorithm + value
+    properties:
+      algorithm: enum[md5, sha1, sha256, imphash, unknown]
+      value: string
+    source_sourcetypes:
+      - sysmon
+      - symantec:ep:*
+      - osquery:results
+
+  Service:
+    layer: AssetState
+    description: 系统服务、守护进程、计划服务或启动项。
+    key_strategy: host_id + service_name
+    properties:
+      service_name: string
+      display_name: string
+      start_type: string
+      status: string
+      image_path: string
+    source_sourcetypes:
+      - osquery:results
+      - winhostmon
+      - unix:service
+
+  Software:
+    layer: AssetState
+    description: 主机上安装的软件、包或应用。
+    key_strategy: host_id + software_name + version
+    properties:
+      software_name: string
+      version: string
+      vendor: string
+      install_path: string
+      install_time: datetime
+    source_sourcetypes:
+      - script:installedapps
+      - osquery:results
+
+  IP:
+    layer: Network
+    description: IPv4 或 IPv6 地址。
+    key_strategy: ip_address
+    properties:
+      ip_address: string
+      version: enum[ipv4, ipv6]
+      is_private: boolean
+      geo_country: string
+      asn: string
+      reputation_score: float
+    source_sourcetypes:
+      - stream:tcp
+      - stream:udp
+      - stream:http
+      - stream:dns
+      - cisco:asa
+      - aws:cloudwatchlogs:vpcflow
+      - aws:cloudtrail
+      - ms:aad:signin
+    notes:
+      - 内网 IP 可能复用，需要通过 Host-IP 时间边消歧。
+
+  Domain:
+    layer: Network
+    description: DNS 域名或 URL 中的域名部分。
+    key_strategy: lower(fqdn)
+    properties:
+      fqdn: string
+      registrable_domain: string
+      tld: string
+      reputation_score: float
+    source_sourcetypes:
+      - stream:dns
+      - stream:http
+
+  URL:
+    layer: Network
+    description: HTTP/HTTPS 请求目标或邮件中出现的链接。
+    key_strategy: normalized_url_hash
+    properties:
+      url: string
+      scheme: string
+      host: string
+      path: string
+      query_hash: string
+      method: string
+      status_code: integer
+    source_sourcetypes:
+      - stream:http
+      - access_combined
+      - apache:access
+      - aws:elb:accesslogs
+      - stream:smtp
+
+  Port:
+    layer: Network
+    description: TCP/UDP 端口。多数情况下可作为边属性，关心暴露面时建为节点。
+    key_strategy: protocol + port_number
+    properties:
+      protocol: enum[tcp, udp, icmp, unknown]
+      port_number: integer
+      service_name: string
+    source_sourcetypes:
+      - netstat
+      - openports
+      - stream:tcp
+      - stream:udp
+      - cisco:asa
+
+  EmailMessage:
+    layer: Message
+    description: 一封邮件消息。
+    key_strategy: message_id 优先；无 message_id 时用 sender + recipients + subject_hash + time_window
+    properties:
+      message_id: string
+      subject: string
+      subject_hash: string
+      sender: string
+      recipients: list[string]
+      delivery_time: datetime
+      direction: enum[inbound, outbound, internal, unknown]
+      has_attachment: boolean
+    source_sourcetypes:
+      - stream:smtp
+      - ms:o365:reporting:messagetrace
+      - o365:management:activity
+
+  CloudAPI:
+    layer: Cloud
+    description: 云平台 API 动作，例如 ListBuckets、GetObject、PutBucketAcl。
+    key_strategy: cloud_provider + service + action
+    properties:
+      cloud_provider: enum[aws, azure, gcp, o365, unknown]
+      service: string
+      action: string
+      api_category: string
+      is_write_action: boolean
+    source_sourcetypes:
+      - aws:cloudtrail
+      - o365:management:activity
+      - ms:aad:audit
+    notes:
+      - 将 API 建为节点可以表达 API 调用序列，比只放在边属性里更适合云攻击链学习。
+
+  CloudResource:
+    layer: Cloud
+    description: 云资源，例如 S3 Bucket、S3 Object、EC2、RDS、IAM Policy、SecurityGroup。
+    key_strategy: arn 或 cloud_provider + account_id + region + resource_type + resource_name
+    properties:
+      arn: string
+      cloud_provider: string
+      account_id: string
+      region: string
+      resource_type: string
+      resource_name: string
+      bucket_name: string
+      object_key: string
+      public_exposure: boolean
+    source_sourcetypes:
+      - aws:cloudtrail
+      - aws:s3:accesslogs
+      - aws:config:rule
+      - aws:description
+
+  Detection:
+    layer: Detection
+    description: 安全产品、规则、EDR、AV、GuardDuty 等产生的检测结果。
+    key_strategy: detector + detection_id 或 event_id
+    properties:
+      detection_id: string
+      detector: string
+      name: string
+      category: string
+      severity: string
+      confidence: float
+      verdict: enum[malicious, suspicious, benign, unknown]
+    source_sourcetypes:
+      - symantec:ep:risk:file
+      - symantec:ep:security:file
+      - symantec:ep:traffic:file
+      - aws:cloudwatch:guardduty
+      - aws:config:rule
+    notes:
+      - Detection 是判断，不是原始事实。应连接证据和被标记实体。
+
+  Technique:
+    layer: Detection
+    description: 攻击技术或高阶行为阶段，例如 phishing、lateral_movement、exfiltration。
+    key_strategy: framework + technique_id 或 custom_technique_name
+    properties:
+      framework: enum[mitre_attack, custom, unknown]
+      technique_id: string
+      name: string
+      tactic: string
+      description: string
+    source_sourcetypes:
+      - derived
+      - analyst_label
+      - rule_mapping
+
+relationship_types:
+  OBSERVED_ON:
+    from: [Event]
+    to: [Host]
+    description: Event 发生或被观测在某台主机上。
+    source_sourcetypes: [all_host_related]
+    properties:
+      event_time: datetime
+      sensor_host: string
+
+  ACTOR:
+    from: [Event]
+    to: [User, Account, IAMPrincipal, EmailAccount, Process, IP]
+    description: Event 的主动方或行为主体。
+    source_sourcetypes: [all]
+    properties:
+      actor_role: string
+
+  TARGET:
+    from: [Event]
+    to: [Host, Process, File, IP, Domain, URL, CloudResource, EmailMessage]
+    description: Event 的目标对象。
+    source_sourcetypes: [all]
+    properties:
+      target_role: string
+
+  USED:
+    from: [Event]
+    to: [Process, Executable, Account, IAMPrincipal, CloudAPI]
+    description: Event 中使用的工具、进程、账号、身份或 API。
+    source_sourcetypes: [all]
+
+  GENERATED:
+    from: [Event]
+    to: [Detection]
+    description: Event 触发或产生检测结果。
+    source_sourcetypes:
+      - symantec:ep:*
+      - aws:cloudwatch:guardduty
+
+  SUPPORTS:
+    from: [Event]
+    to: [RelationFact]
+    description: Event 支撑某个抽取出的语义关系。若图数据库不支持关系节点，可用 evidence_event_ids 属性替代。
+    source_sourcetypes: [all]
+
+  USES_ACCOUNT:
+    from: [User]
+    to: [Account]
+    description: 用户主体使用某个账号表示。
+    source_sourcetypes:
+      - wineventlog
+      - linux_secure
+      - ms:aad:signin
+      - unix:useraccounts
+
+  MEMBER_OF:
+    from: [User, Account]
+    to: [Group]
+    description: 用户或账号属于某个权限组。
+    source_sourcetypes:
+      - wineventlog
+      - unix:useraccounts
+      - ms:aad:audit
+
+  LOGIN_TO:
+    from: [User, Account]
+    to: [Host, CloudResource]
+    description: 用户或账号成功登录到主机或云服务。
+    source_sourcetypes:
+      - wineventlog
+      - linux_secure
+      - ms:aad:signin
+    properties:
+      success: boolean
+      logon_type: string
+      auth_method: string
+      src_ip: string
+      failure_reason: string
+
+  LOGIN_AS:
+    from: [IP]
+    to: [User, Account]
+    description: 某个源 IP 以某用户或账号身份发起登录。
+    source_sourcetypes:
+      - wineventlog
+      - linux_secure
+      - ms:aad:signin
+    properties:
+      success: boolean
+      auth_method: string
+
+  ASSUMED_ROLE:
+    from: [IAMPrincipal]
+    to: [IAMPrincipal]
+    description: 一个 IAM 主体 AssumeRole 成为另一个角色会话。
+    source_sourcetypes:
+      - aws:cloudtrail
+    properties:
+      role_arn: string
+      session_name: string
+
+  RUNS_PROCESS:
+    from: [Host]
+    to: [Process]
+    description: 主机上运行某个进程实例。
+    source_sourcetypes:
+      - sysmon
+      - ps
+      - osquery:results
+
+  EXECUTED:
+    from: [User, Account]
+    to: [Process]
+    description: 用户或账号执行了某个进程。
+    source_sourcetypes:
+      - sysmon
+      - wineventlog
+      - ps
+    properties:
+      command_line: string
+      integrity_level: string
+
+  SPAWNED:
+    from: [Process]
+    to: [Process]
+    description: 父进程创建子进程。
+    source_sourcetypes:
+      - xmlwineventlog:microsoft-windows-sysmon/operational
+    properties:
+      parent_pid: integer
+      child_pid: integer
+      parent_image: string
+      child_image: string
+      command_line: string
+
+  HAS_IMAGE:
+    from: [Process]
+    to: [Executable]
+    description: 进程实例对应磁盘上的可执行镜像。
+    source_sourcetypes:
+      - sysmon
+      - ps
+      - osquery:results
+
+  READ_FILE:
+    from: [Process, User, Account]
+    to: [File]
+    description: 进程或用户读取文件。
+    source_sourcetypes:
+      - sysmon
+      - symantec:ep:*
+      - lsof
+      - code42:*
+
+  WROTE_FILE:
+    from: [Process, User, Account]
+    to: [File]
+    description: 进程或用户写入文件。
+    source_sourcetypes:
+      - sysmon
+      - symantec:ep:*
+      - lsof
+      - code42:*
+
+  CREATED_FILE:
+    from: [Process, User, Account, EmailMessage]
+    to: [File]
+    description: 创建文件，例如进程落地文件或邮件附件生成文件对象。
+    source_sourcetypes:
+      - sysmon
+      - stream:smtp
+      - ms:o365:reporting:messagetrace
+      - aws:s3:accesslogs
+
+  DELETED_FILE:
+    from: [Process, User, Account]
+    to: [File]
+    description: 删除文件。
+    source_sourcetypes:
+      - sysmon
+      - symantec:ep:*
+
+  HAS_HASH:
+    from: [File, Executable]
+    to: [Hash]
+    description: 文件或可执行镜像具有某个内容指纹。
+    source_sourcetypes:
+      - sysmon
+      - symantec:ep:*
+      - osquery:results
+
+  HAS_INTERFACE:
+    from: [Host]
+    to: [IP]
+    description: 主机在某时间范围内拥有某 IP 地址。
+    source_sourcetypes:
+      - interfaces
+      - osquery:results
+      - winhostmon
+    properties:
+      start_time: datetime
+      end_time: datetime
+      mac_address: string
+
+  CONNECTED_TO:
+    from: [Process, Host, IP]
+    to: [IP, Host, CloudResource]
+    description: 源实体与目标 IP、主机或云资源建立网络连接。
+    source_sourcetypes:
+      - xmlwineventlog:microsoft-windows-sysmon/operational
+      - stream:tcp
+      - stream:udp
+      - cisco:asa
+      - aws:cloudwatchlogs:vpcflow
+    properties:
+      src_ip: string
+      src_port: integer
+      dest_ip: string
+      dest_port: integer
+      protocol: string
+      action: enum[allowed, blocked, teardown, unknown]
+      bytes_in: integer
+      bytes_out: integer
+      packets: integer
+
+  LISTENS_ON:
+    from: [Host, Process, Service]
+    to: [Port]
+    description: 主机、进程或服务监听某端口。
+    source_sourcetypes:
+      - netstat
+      - openports
+      - script:listeningports
+      - osquery:results
+
+  BINDS_PORT:
+    from: [Service, Process]
+    to: [Port]
+    description: 服务或进程绑定端口。
+    source_sourcetypes:
+      - netstat
+      - openports
+      - osquery:results
+
+  QUERIED_DOMAIN:
+    from: [Host, Process, IP]
+    to: [Domain]
+    description: 主机、进程或 IP 查询某域名。
+    source_sourcetypes:
+      - stream:dns
+    properties:
+      query: string
+      record_type: string
+      response_code: string
+
+  RESOLVED_TO:
+    from: [Domain]
+    to: [IP]
+    description: 域名解析到某 IP。
+    source_sourcetypes:
+      - stream:dns
+    properties:
+      ttl: integer
+      record_type: string
+
+  REQUESTED_URL:
+    from: [Host, Process, IP]
+    to: [URL]
+    description: 主机、进程或 IP 请求某 URL。
+    source_sourcetypes:
+      - stream:http
+      - access_combined
+      - apache:access
+      - aws:elb:accesslogs
+    properties:
+      method: string
+      status_code: integer
+      user_agent: string
+      bytes_in: integer
+      bytes_out: integer
+
+  HAS_DOMAIN:
+    from: [URL]
+    to: [Domain]
+    description: URL 包含某域名。
+    source_sourcetypes:
+      - stream:http
+      - stream:smtp
+
+  SENT_EMAIL:
+    from: [EmailAccount]
+    to: [EmailMessage]
+    description: 邮箱账号发送邮件。
+    source_sourcetypes:
+      - stream:smtp
+      - ms:o365:reporting:messagetrace
+    properties:
+      sender_ip: string
+      subject: string
+
+  RECEIVED_BY:
+    from: [EmailMessage]
+    to: [EmailAccount]
+    description: 邮件被某邮箱账号接收。
+    source_sourcetypes:
+      - stream:smtp
+      - ms:o365:reporting:messagetrace
+
+  HAS_ATTACHMENT:
+    from: [EmailMessage]
+    to: [File]
+    description: 邮件携带附件。
+    source_sourcetypes:
+      - stream:smtp
+      - ms:o365:reporting:messagetrace
+    properties:
+      attachment_name: string
+      attachment_size: integer
+
+  CONTAINS_URL:
+    from: [EmailMessage]
+    to: [URL]
+    description: 邮件正文或附件中包含 URL。
+    source_sourcetypes:
+      - stream:smtp
+      - ms:o365:reporting:messagetrace
+
+  CALLED_API:
+    from: [IAMPrincipal, User, Account]
+    to: [CloudAPI]
+    description: 身份主体调用云 API。
+    source_sourcetypes:
+      - aws:cloudtrail
+      - o365:management:activity
+      - ms:aad:audit
+    properties:
+      event_name: string
+      event_source: string
+      source_ip: string
+      user_agent: string
+      request_id: string
+      error_code: string
+
+  USED_CREDENTIAL:
+    from: [IP]
+    to: [IAMPrincipal, Account]
+    description: 源 IP 使用某身份凭证发起云 API 或登录行为。
+    source_sourcetypes:
+      - aws:cloudtrail
+      - ms:aad:signin
+    properties:
+      access_key_id: string
+      user_agent: string
+
+  AFFECTED_RESOURCE:
+    from: [CloudAPI]
+    to: [CloudResource]
+    description: 云 API 影响某个云资源。
+    source_sourcetypes:
+      - aws:cloudtrail
+    properties:
+      request_parameters: map
+      response_elements: map
+
+  ACCESSED_OBJECT:
+    from: [IAMPrincipal, User, Account, IP]
+    to: [CloudResource, File]
+    description: 身份或 IP 访问对象存储、数据库或文件对象。
+    source_sourcetypes:
+      - aws:s3:accesslogs
+      - aws:rds:audit
+      - code42:*
+    properties:
+      operation: enum[GET, PUT, DELETE, LIST, COPY, UNKNOWN]
+      object_key: string
+      bytes: integer
+      status_code: string
+
+  HAS_SOFTWARE:
+    from: [Host]
+    to: [Software]
+    description: 主机安装某软件。
+    source_sourcetypes:
+      - script:installedapps
+      - osquery:results
+
+  HAS_SERVICE:
+    from: [Host]
+    to: [Service]
+    description: 主机拥有某服务。
+    source_sourcetypes:
+      - osquery:results
+      - winhostmon
+      - unix:service
+
+  DETECTED_ON:
+    from: [Detection]
+    to: [Host]
+    description: 检测结果发生在某台主机或资产上。
+    source_sourcetypes:
+      - symantec:ep:*
+      - aws:cloudwatch:guardduty
+
+  FLAGS:
+    from: [Detection]
+    to: [File, IP, Domain, URL, Process, Host, CloudResource, IAMPrincipal]
+    description: 检测结果标记某实体为风险对象。
+    source_sourcetypes:
+      - symantec:ep:*
+      - aws:cloudwatch:guardduty
+      - aws:config:rule
+    properties:
+      verdict: enum[malicious, suspicious, benign, unknown]
+      severity: string
+      signature: string
+
+  MAPS_TO:
+    from: [Detection, Event, Process, CloudAPI]
+    to: [Technique]
+    description: 检测、事件或行为映射到攻击技术。
+    source_sourcetypes:
+      - derived
+      - analyst_label
+      - rule_mapping
+
+source_mapping:
+  network_traffic:
+    description: 描述 A 到 B 的连接、解析、访问、协议交互。
+    sourcetypes:
+      - stream:http
+      - stream:dns
+      - stream:tcp
+      - stream:udp
+      - stream:smb
+      - stream:smtp
+      - stream:icmp
+      - cisco:asa
+      - aws:cloudwatchlogs:vpcflow
+      - aws:elb:accesslogs
+      - access_combined
+      - apache:access
+    primary_nodes:
+      - IP
+      - Domain
+      - URL
+      - Port
+      - Host
+      - Process
+    primary_edges:
+      - CONNECTED_TO
+      - QUERIED_DOMAIN
+      - RESOLVED_TO
+      - REQUESTED_URL
+      - HAS_DOMAIN
+
+  endpoint_behavior:
+    description: 描述进程、文件、命令行、父子进程、EDR 风险和终端行为。
+    sourcetypes:
+      - xmlwineventlog:microsoft-windows-sysmon/operational
+      - wineventlog
+      - symantec:ep:*
+      - ps
+      - lsof
+      - osquery:results
+      - perfmonmk:process
+    primary_nodes:
+      - Host
+      - User
+      - Process
+      - Executable
+      - File
+      - Hash
+      - Detection
+    primary_edges:
+      - RUNS_PROCESS
+      - EXECUTED
+      - SPAWNED
+      - HAS_IMAGE
+      - READ_FILE
+      - WROTE_FILE
+      - CREATED_FILE
+      - DELETED_FILE
+      - HAS_HASH
+      - CONNECTED_TO
+      - FLAGS
+
+  identity_authentication:
+    description: 描述用户从哪里登录到哪里、是否成功、使用什么认证方式。
+    sourcetypes:
+      - wineventlog
+      - linux_secure
+      - lastlog
+      - who
+      - ms:aad:signin
+      - ms:aad:audit
+    primary_nodes:
+      - User
+      - Account
+      - Host
+      - IP
+      - CloudResource
+    primary_edges:
+      - USES_ACCOUNT
+      - LOGIN_TO
+      - LOGIN_AS
+      - MEMBER_OF
+
+  cloud_audit:
+    description: 描述云身份调用 API、影响资源、访问对象和触发云告警。
+    sourcetypes:
+      - aws:cloudtrail
+      - aws:s3:accesslogs
+      - aws:cloudwatch
+      - aws:cloudwatch:guardduty
+      - aws:cloudwatchlogs
+      - aws:config:rule
+      - aws:description
+      - aws:rds:audit
+    primary_nodes:
+      - IAMPrincipal
+      - CloudAPI
+      - CloudResource
+      - IP
+      - Detection
+      - File
+    primary_edges:
+      - CALLED_API
+      - USED_CREDENTIAL
+      - AFFECTED_RESOURCE
+      - ACCESSED_OBJECT
+      - FLAGS
+
+  email_communication:
+    description: 描述邮件发送、接收、附件、邮件 URL，通常用于钓鱼入口建模。
+    sourcetypes:
+      - stream:smtp
+      - ms:o365:reporting:messagetrace
+      - o365:management:activity
+    primary_nodes:
+      - EmailAccount
+      - EmailMessage
+      - File
+      - URL
+      - Domain
+      - IP
+    primary_edges:
+      - SENT_EMAIL
+      - RECEIVED_BY
+      - HAS_ATTACHMENT
+      - CONTAINS_URL
+      - HAS_DOMAIN
+
+  asset_state:
+    description: 描述主机上有什么，而不是某个攻击行为本身。
+    sourcetypes:
+      - osquery:results
+      - script:installedapps
+      - script:listeningports
+      - netstat
+      - openports
+      - unix:listeningports
+      - unix:useraccounts
+      - winhostmon
+      - df
+      - cpu
+      - top
+      - vmstat
+      - hardware
+      - interfaces
+    primary_nodes:
+      - Host
+      - Software
+      - Service
+      - Port
+      - User
+      - IP
+      - Process
+    primary_edges:
+      - HAS_SOFTWARE
+      - HAS_SERVICE
+      - LISTENS_ON
+      - HAS_INTERFACE
+      - RUNS_PROCESS
+
+normalization_rules:
+  host_resolution:
+    priority:
+      - asset_id
+      - cloud_instance_id
+      - fqdn
+      - hostname + domain
+      - hostname + time_window + ip
+    notes:
+      - IP 只能作为辅助特征，不应直接等同 Host。
+      - DHCP、NAT、云弹性 IP 场景必须保留时间范围。
+
+  user_resolution:
+    normalize:
+      - lower_case_domain_and_username
+      - strip_realm_variants
+      - map_email_to_user_when_confident
+    examples:
+      - raw: CORP\\alice
+        account_name: alice
+        namespace: CORP
+      - raw: alice@example.com
+        account_name: alice@example.com
+        namespace: example.com
+    notes:
+      - User 与 Account 分离，避免误合并服务账号、外部邮箱和本地账号。
+
+  process_resolution:
+    priority:
+      - host_id + process_guid
+      - host_id + pid + image + start_time_window
+    notes:
+      - pid 可复用，不能单独作为进程唯一键。
+      - 进程名只能用于 Executable 或属性，不能作为 Process 唯一键。
+
+  file_resolution:
+    priority:
+      - sha256
+      - sha1
+      - md5
+      - host_id + normalized_path + time_window
+      - storage_uri
+    notes:
+      - 同一路径不一定同一文件，同一 hash 才更接近同一内容。
+      - 邮件附件、落地文件、S3 Object 可以通过 Hash 关联。
+
+  domain_url_resolution:
+    domain:
+      - lower_case_fqdn
+      - extract_registrable_domain
+    url:
+      - normalize_scheme_host_path
+      - optionally_hash_query_string
+    notes:
+      - URL 粒度细，Domain 粒度粗。C2 聚类通常看 Domain，下载溯源通常看 URL。
+
+  cloud_resource_resolution:
+    priority:
+      - arn
+      - cloud_provider + account_id + region + resource_type + resource_name
+      - bucket_name + object_key
+    notes:
+      - S3 Bucket 和 S3 Object 可以都建为 CloudResource，也可将 Object 同时映射为 File。
+
+temporal_policy:
+  default_relation_time_fields:
+    - event_time
+    - start_time
+    - end_time
+    - first_seen
+    - last_seen
+  aggregation:
+    no_aggregation_by_default:
+      - LOGIN_TO
+      - EXECUTED
+      - SPAWNED
+      - CREATED_FILE
+      - DELETED_FILE
+      - CALLED_API
+      - AFFECTED_RESOURCE
+      - SENT_EMAIL
+      - HAS_ATTACHMENT
+    aggregate_by_time_window:
+      CONNECTED_TO:
+        window: 1m_or_5m
+        group_by:
+          - src_entity
+          - dest_entity
+          - protocol
+          - dest_port
+      REQUESTED_URL:
+        window: 1m_or_5m
+        group_by:
+          - src_entity
+          - url_or_domain
+          - method
+          - status_code
+      QUERIED_DOMAIN:
+        window: 1m_or_5m
+        group_by:
+          - src_entity
+          - domain
+          - record_type
+  ordering:
+    description: >
+      攻击链推理应优先使用 event_time 排序；当日志时钟不可信时，使用 ingest_time 和 source-specific ordering 辅助。
+
+relation_fact_pattern:
+  description: >
+    如果底层图数据库不支持边属性或边到边的证据连接，可以显式引入 RelationFact 节点。
+  example:
+    nodes:
+      - Process:powershell_instance
+      - IP:c2_ip
+      - RelationFact:connected_to_fact
+      - Event:sysmon_network_event
+    edges:
+      - Process:powershell_instance -> SOURCE_OF -> RelationFact:connected_to_fact
+      - RelationFact:connected_to_fact -> DESTINATION_OF -> IP:c2_ip
+      - Event:sysmon_network_event -> SUPPORTS -> RelationFact:connected_to_fact
+
+attack_path_templates:
+  phishing_to_execution:
+    description: 钓鱼邮件导致附件落地并执行。
+    path:
+      - EmailAccount -> SENT_EMAIL -> EmailMessage
+      - EmailMessage -> RECEIVED_BY -> EmailAccount
+      - EmailMessage -> HAS_ATTACHMENT -> File
+      - File -> HAS_HASH -> Hash
+      - User -> EXECUTED -> Process
+      - Process -> READ_FILE -> File
+      - Process -> SPAWNED -> Process
+      - Process -> CONNECTED_TO -> IP
+
+  endpoint_c2:
+    description: 终端进程连接 C2 基础设施。
+    path:
+      - User -> LOGIN_TO -> Host
+      - Host -> RUNS_PROCESS -> Process
+      - Process -> SPAWNED -> Process
+      - Process -> QUERIED_DOMAIN -> Domain
+      - Domain -> RESOLVED_TO -> IP
+      - Process -> CONNECTED_TO -> IP
+
+  lateral_movement:
+    description: 横向移动。
+    path:
+      - IP -> LOGIN_AS -> User
+      - User -> LOGIN_TO -> Host
+      - User -> EXECUTED -> Process
+      - Process -> CONNECTED_TO -> IP
+      - IP -> LOGIN_AS -> User
+      - User -> LOGIN_TO -> Host
+
+  cloud_exfiltration:
+    description: 云凭证被使用后访问对象存储并下载数据。
+    path:
+      - IP -> USED_CREDENTIAL -> IAMPrincipal
+      - IAMPrincipal -> CALLED_API -> CloudAPI
+      - CloudAPI -> AFFECTED_RESOURCE -> CloudResource
+      - IAMPrincipal -> ACCESSED_OBJECT -> CloudResource
+      - CloudResource -> HAS_HASH -> Hash
+
+  detection_explanation:
+    description: 从告警回溯到证据和实体。
+    path:
+      - Detection -> FLAGS -> Entity
+      - Event -> GENERATED -> Detection
+      - Event -> ACTOR -> Entity
+      - Event -> TARGET -> Entity
+      - Event -> OBSERVED_ON -> Host
+
+gnn_metagraph:
+  node_types:
+    - User
+    - Account
+    - IAMPrincipal
+    - EmailAccount
+    - Host
+    - Process
+    - Executable
+    - File
+    - Hash
+    - IP
+    - Domain
+    - URL
+    - Port
+    - CloudAPI
+    - CloudResource
+    - EmailMessage
+    - Detection
+    - Technique
+  edge_types:
+    - USES_ACCOUNT
+    - LOGIN_TO
+    - LOGIN_AS
+    - EXECUTED
+    - RUNS_PROCESS
+    - SPAWNED
+    - HAS_IMAGE
+    - READ_FILE
+    - WROTE_FILE
+    - CREATED_FILE
+    - HAS_HASH
+    - CONNECTED_TO
+    - QUERIED_DOMAIN
+    - RESOLVED_TO
+    - REQUESTED_URL
+    - SENT_EMAIL
+    - RECEIVED_BY
+    - HAS_ATTACHMENT
+    - CALLED_API
+    - AFFECTED_RESOURCE
+    - ACCESSED_OBJECT
+    - FLAGS
+  recommended_tasks:
+    - malicious_entity_detection
+    - suspicious_path_ranking
+    - attack_stage_classification
+    - root_cause_localization
+    - alert_evidence_retrieval
+  feature_guidelines:
+    entity_features:
+      - type_embedding
+      - time_since_first_seen
+      - degree_statistics
+      - rarity_score
+      - source_diversity
+      - reputation_score_when_available
+    relation_features:
+      - event_time_encoding
+      - count
+      - bytes_in
+      - bytes_out
+      - protocol
+      - action
+      - sourcetype_embedding
+      - confidence
+
+implementation_notes:
+  graph_database:
+    neo4j:
+      node_labels: 使用 node_types 作为 label。
+      relationship_types: 使用 relationship_types 中的 key 作为关系类型。
+      constraints:
+        - Event.event_id unique
+        - Host.asset_id unique when exists
+        - Process.process_guid unique within Host
+        - IP.ip_address indexed
+        - Domain.fqdn indexed
+        - Hash.algorithm + Hash.value unique
+        - CloudResource.arn unique when exists
+    property_graph:
+      recommendation: >
+        若使用属性图，语义关系直接作为边，evidence_event_ids 保存在边属性中。
+    rdf_owl:
+      recommendation: >
+        若要形式化推理，可将 node_types 映射为 Class，relationship_types 映射为 ObjectProperty，properties 映射为 DataProperty。
+
+  extraction_pipeline:
+    stages:
+      - parse_raw_event
+      - normalize_event_type
+      - extract_entities
+      - resolve_entities
+      - extract_relation_facts
+      - attach_evidence
+      - temporal_aggregate_selected_relations
+      - write_graph
+
+  minimum_viable_schema:
+    nodes:
+      - Event
+      - User
+      - Host
+      - Process
+      - File
+      - Hash
+      - IP
+      - Domain
+      - URL
+      - EmailMessage
+      - IAMPrincipal
+      - CloudAPI
+      - CloudResource
+      - Detection
+    relationships:
+      - OBSERVED_ON
+      - ACTOR
+      - TARGET
+      - LOGIN_TO
+      - EXECUTED
+      - RUNS_PROCESS
+      - SPAWNED
+      - CONNECTED_TO
+      - QUERIED_DOMAIN
+      - RESOLVED_TO
+      - REQUESTED_URL
+      - HAS_ATTACHMENT
+      - HAS_HASH
+      - CALLED_API
+      - AFFECTED_RESOURCE
+      - ACCESSED_OBJECT
+      - FLAGS
