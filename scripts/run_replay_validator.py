@@ -83,140 +83,36 @@ def _load_alerts(limit: int = 0):
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--limit", type=int, default=0,
-                    help="最多重判多少条（0=全部）")
-    args = ap.parse_args()
+    ap.add_argument("--limit", type=int, default=0, help="（已弃用，保留兼容）")
+    ap.parse_args()
 
     for f in (ALERTS_DB, PARSED_DB, OLD_JUDGMENTS_DB):
         if not f.exists():
             print(f"ERROR: {f} not found. 先跑前置脚本。")
             return 1
 
-    # 1. 加载老 judgments（v1.0 时代）
-    old_store = JudgmentStore(db_path=OLD_JUDGMENTS_DB)
-    old_judgments = old_store.list_recent(limit=1000)
-    old_store.close()
-    old_v = old_judgments[0]["ontology_version"] if old_judgments else "1.0"
-    print(f"[before] {len(old_judgments)} 老 judgments （v{old_v}）")
+    from evolution.pipeline_ops import rejudge_and_compare
 
-    # 2. 升级后本体 + 现 parser 配置（含 generated/）
-    svc = get_service()
-    onto = svc.get_current()
-    cfg = ParserConfig.load_all([MAPPINGS_DIR, GENERATED_MAPPINGS_DIR])
-    print(f"[onto] v{onto.version}  nodes={len(onto.nodes)}  edges={len(onto.edges)}")
-    print(f"[parser] {len(cfg.rules)} 规则")
+    def _cb(i, n, a, j):
+        v = f"{j.verdict} conf={j.confidence:.2f}" if j else "FAILED"
+        gap = " [GAP]" if (j and j.semantic_gap) else ""
+        print(f"  [{i}/{n}] {a.rule_id:40s} → {v}{gap}")
 
-    # 3. 重建图 + replay（图谱含 ScheduledTask 节点）
-    g = GraphStore(ontology_version=onto.version)
-    import_parsed_db(PARSED_DB, g)
-    if CMDB_FILE.exists():
-        load_cmdb(CMDB_FILE, g)
-    print(f"[graph] 初始: {g.node_count()} nodes / {g.edge_count()} edges")
-
-    pool = AnomalyPool()
-    # Demo 重跑保护：若昨天已 backfilled 则重置（保证图能拿到 ScheduledTask）
-    if pool.size_open() < pool.size_total():
-        n = pool.reset_backfilled()
-        print(f"[pool] 重置 backfilled 标志（{n} 条全部翻 open）")
-    pool_before = pool.size_open()
-    eng_replay = ReplayEngine(anomaly_pool=pool, parser_config=cfg,
-                              ontology=onto, graph=g)
-    rep_replay = eng_replay.replay()
-    pool_after = rep_replay.total_open_after
-    print(f"[replay] 异常池 {pool_before} → {pool_after}; "
-          f"灌图 +{rep_replay.new_entities} new entities")
-    print(f"[graph] 回放后: {g.node_count()} nodes / {g.edge_count()} edges")
-
-    # 4. 加载 alerts，重判
-    alerts = _load_alerts(args.limit)
-    print(f"\n[alerts] {len(alerts)} 条待重判（真调 LLM，约 ~{6500*len(alerts)} tokens）")
-
-    llm = get_client()
-    judge_engine = JudgmentEngine(
-        llm=llm, graph=g, signal_hub=get_hub(),
-        ontology=onto, subgraph_depth=2,
-    )
-    new_judgments = []
-    for i, a in enumerate(alerts, 1):
-        try:
-            j = judge_engine.judge(a)
-            new_judgments.append(j)
-            tag = []
-            if j.semantic_gap:
-                tag.append("[GAP]")
-            if j.needs_review:
-                tag.append("[REVIEW]")
-            print(f"  [{i}/{len(alerts)}] {a.rule_id:40s} "
-                  f"→ {j.verdict:10s} conf={j.confidence:.2f} "
-                  f"evidence×{len(j.evidence_refs)} {' '.join(tag)}")
-        except Exception as exc:
-            print(f"  [{i}/{len(alerts)}] {a.rule_id} FAILED: {exc}")
-
-    # 5. 持久化重判结果（v1.1 时代的 after judgments）
-    if NEW_JUDGMENTS_DB.exists():
-        NEW_JUDGMENTS_DB.unlink()
-    new_store = JudgmentStore(db_path=NEW_JUDGMENTS_DB)
-    new_store.insert_many(new_judgments)
-    new_store.close()
-    print(f"\n[after-judgments] 写入 {NEW_JUDGMENTS_DB.name}：{len(new_judgments)} 条")
-
-    # 6. diff
-    report = compare_judgments(
-        before=old_judgments,
-        after=new_judgments,
-        pool_open_before=pool_before,
-        pool_open_after=pool_after,
-        ontology_version_before=old_v,
-        ontology_version_after=onto.version,
-    )
+    print("[rejudge] 重建图 + 回放 + 重判（真调 LLM）...")
+    report = rejudge_and_compare(progress_cb=_cb)  # 服务层：CLI 与 UI 共用
 
     print(f"\n=== ValidatorReport ===")
     print(f"  ontology  : v{report.ontology_version_before} → v{report.ontology_version_after}")
     print(f"  pool size : {report.pool_open_before} → {report.pool_open_after}  "
           f"(Δ {report.pool_delta})")
-    print(f"  rejudged  : {report.rejudged_count}")
-    print(f"    upgraded   : {report.verdict_upgraded}")
-    print(f"    downgraded : {report.verdict_downgraded}")
-    print(f"    unchanged  : {report.verdict_unchanged}")
+    print(f"  rejudged  : {report.rejudged_count}  "
+          f"upgraded={report.verdict_upgraded}  "
+          f"downgraded={report.verdict_downgraded}  "
+          f"unchanged={report.verdict_unchanged}")
     print(f"  semantic_gap : cleared {report.semantic_gap_cleared} / "
           f"persisted {report.semantic_gap_persisted}")
     print(f"  evidence_refs avg : "
           f"{report.avg_evidence_refs_before:.2f} → {report.avg_evidence_refs_after:.2f}")
-
-    # 详细变更
-    print(f"\n  详细变更（{len(report.verdict_changes)}）:")
-    for c in report.verdict_changes:
-        flag = ""
-        if c.delta == "upgraded":
-            flag = "↑↑"
-        elif c.delta == "downgraded":
-            flag = "↓↓"
-        elif c.delta == "unchanged":
-            flag = "  "
-        gap_flag = " [GAP-CLEARED]" if c.semantic_gap_cleared else ""
-        print(f"    {flag} {c.alert_id[:8]}  "
-              f"{c.before_verdict}({c.before_confidence:.2f}) → "
-              f"{c.after_verdict}({c.after_confidence:.2f})  "
-              f"refs {c.before_evidence_count}→{c.after_evidence_count}"
-              f"{gap_flag}")
-        if c.new_graph_node_refs:
-            for ref in c.new_graph_node_refs:
-                print(f"        + new ref: {ref}")
-
-    # 7. 落 JSON
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    out = REPORTS_DIR / f"validator_{ts}.json"
-    out.write_text(
-        json.dumps(report.to_dict(), ensure_ascii=False, indent=2, default=str),
-        encoding="utf-8",
-    )
-    print(f"\n[report] {out}")
-
-    print(f"\n[llm] usage: calls={llm.usage.calls} "
-          f"prompt={llm.usage.prompt_tokens} "
-          f"completion={llm.usage.completion_tokens} "
-          f"total={llm.usage.total_tokens}")
     return 0
 
 

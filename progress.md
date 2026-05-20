@@ -4,6 +4,46 @@
 
 ---
 
+## 2026-05-19 · 会话 19：演示可用化（修 UI 锁 + 文案诚实化 + 演化管线按钮化）
+
+### 起因
+用户实际启动 `streamlit run ui/main.py` 演示，连撞两个真实 bug，最后提出"演示还要敲终端，领导一看像半成品"。围绕"让现场演化直播真能跑、且专业、且诚实"做了三块。
+
+### ① 修 UI 长期占用 DuckDB 连接
+- **同进程冲突（崩溃）**：阶段 4 C 三页签整合进单进程后，告警研判页 `get_hub()` 单例对 `signals.duckdb` 持读写连接常驻，评测看板 `_load_signals()` 又用 `read_only=True` 开同文件 → DuckDB "同进程不同配置" ConnectionException。
+- **跨进程锁**：实测 Windows 上 DuckDB 被一进程打开后，另一进程连只读都打不开。`@st.cache_resource` 让 streamlit 常驻锁住 proposals / candidate_parsers / anomaly_pool / signals 四库 → 终端脚本并发必撞 IOException。
+- **修法**：UI 全部改**短连接（开→用→关）**。`evolution_review` / `parser_review` 抽 `_load_view` + `_do_*` 短连接 helper；`dashboard` / `judgment_review` 的 signals 改临时 `SignalHub`；只保留无连接的 `_cached_service` / `_cached_graph`，并给图谱加【🔄 重建图谱】按钮。
+- 验证：AppTest 渲染整页后探锁——修复前四库全锁，修复后全部未锁。
+
+### ② 演示文案诚实化
+- 完整跑一遍发现 demo_script / README 的招牌"LSASS malicious→suspicious 误降、准确率 50%→44.4%"是 **LLM 非确定性结果**，重跑不保证复现（一轮 0 降级、一轮 1 降级）。
+- 改文案：主打**确定性**结果（异常池 32→10、17 节点、2 条 relation 被闸门 strip、6 条 semantic_gap 持续→**回滚提议 WARNING 每次都触发**）；verdict 部分如实标注"随 LLM 浮动，降级是可能出现的代价"。
+- 新增 `scripts/reset_for_demo.py`：一键把 v1.1 终态精确退回 v1.0 起跑线（删 v1.1.yaml / 提议改回 pending / 删 generated parser+candidate db / reset_backfilled / 删 manual_annotation 信号 / 清回放报告）。
+
+### ③ 演化管线 UI 按钮化（零终端演示）
+- 新增服务层 **`evolution/pipeline_ops.py`**：`generate_candidates` / `replay_pool` / `rejudge_and_compare(progress_cb=)` / `latest_rollback_assessment`。CLI 脚本与 UI 按钮共用，逻辑不再两份。
+- `rejudge_alerts` 加可选 `progress_cb` 钩子喂 UI 实时进度条。
+- 新增 **`ui/replay_review.py`**（🔁 回放与验证 sub-tab）：【▶ 回放异常池】【🔬 回放重判+对比（st.progress 实时「重判 N/10」）】【🛡 回滚检查】；`parser_review` 加【🤖 生成候选 Parser】按钮。
+- 四个脚本（generate_parser / replay_anomaly_pool / run_replay_validator / check_rollback）退化成调 pipeline_ops 的瘦壳（CI/无头仍可用）。
+- 设计 spec：`docs/superpowers/specs/2026-05-20-evolution-ui-buttons-design.md`。
+
+### 测试统计
+**343/343 全绿**（会话 18 的 326 + 本会话 17：连接共存/锁释放 6 + pipeline_ops 7 + rejudge 进度 1 + replay_review 3）。
+
+### 端到端实证
+重构后完整管线重跑一遍（真调 LLM，317s）：P6→P11 全 OK，异常池 32→10、生成候选 strip 2 条、重判 downgraded=1、回滚 WARNING 触发。按钮调的同一套 pipeline_ops 跑通真实数据。
+
+### 决策日志
+- DuckDB 跨进程排他锁是硬约束 → 现场实时演示必须 UI 不持锁（选"修干净"而非"分段录屏"）。
+- 演示按钮粒度选 4 个独立按钮（对应审核员真实工作流），不做一键大按钮/自动链式。
+- 重判 ~4 分钟用实时进度条边讲边等（不预热、不缩范围），保持"真·实时"。
+
+### 下一步（未承诺）
+- 录 5 分钟 Demo（按 docs/demo_script.md 新按钮动线）。
+- 第二轮演化：approve ScheduledTaskModification 清 4702，把异常池压到更低。
+
+---
+
 ## 2026-05-09 · 会话 18：组件 10 Day 5 补完 — RollbackProposer + 全管线 orchestrator（项目真正 100% 收官）
 
 ### 目标

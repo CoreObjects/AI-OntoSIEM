@@ -42,81 +42,31 @@ def main() -> int:
         print(f"ERROR: {PARSED_DB} not found. Run scripts/run_parser.py first.")
         return 1
 
-    svc = get_service()
-    onto = svc.get_current()
+    from core.ontology_service import get_service
+    from evolution.pipeline_ops import replay_pool
+
+    onto = get_service().get_current()
     print(f"[onto] v{onto.version}  nodes={len(onto.nodes)}  edges={len(onto.edges)}")
     if "ScheduledTask" not in onto.nodes:
         print("[WARN] 当前本体不含 ScheduledTask，回放对 4698/4702 不会有效果。"
-              "运行 ui/evolution_review.py approve ScheduledTask 提议后再来。")
+              "先在 UI 演化页 approve ScheduledTask 提议。")
 
-    cfg = ParserConfig.load_all([MAPPINGS_DIR, GENERATED_MAPPINGS_DIR])
-    print(f"[parser] {len(cfg.rules)} 条规则（含 generated）")
-    by_eid = {(r.event_id, r.channel): r.name for r in cfg.rules}
-    for k, v in sorted(by_eid.items()):
-        print(f"  {k}: {v}")
+    print("\n[replay] 跑中（重建图 + 回放异常池）...")
+    res = replay_pool()  # 服务层：CLI 与 UI 共用
 
-    # 1) 重建图（v1.X 上下文）
-    g = GraphStore(ontology_version=onto.version)
-    print("\n[graph] 重建初始图（来自 parsed_events.duckdb）...")
-    stats = import_parsed_db(PARSED_DB, g)
-    for k, v in stats.items():
-        print(f"  {k:20s} {v}")
-    if CMDB_FILE.exists():
-        load_cmdb(CMDB_FILE, g)
-    print(f"  → {g.node_count()} nodes / {g.edge_count()} edges (回放前)")
-
-    # 2) 跑回放
-    pool = AnomalyPool()
-    print(f"\n[pool] open before: {pool.size_open()}  total: {pool.size_total()}")
-    print(f"  by event_id (open):")
-    for eid, n in sorted(pool.count_by_event_id().items(),
-                         key=lambda kv: -kv[1]):
-        print(f"    {eid}: {n}")
-
-    eng = ReplayEngine(anomaly_pool=pool, parser_config=cfg,
-                       ontology=onto, graph=g)
-    print("\n[replay] 跑中...")
-    report = eng.replay()
-
-    # 3) 报告
+    report = res.report
     print(f"\n=== ReplayReport ===")
-    print(f"  ontology_version : {report.ontology_version}")
     print(f"  attempted        : {report.attempted}")
     print(f"  backfilled       : {report.backfilled}  ({report.success_rate*100:.1f}%)")
     print(f"  failed           : {report.failed}")
-    print(f"  pool open before : {report.total_open_before}")
-    print(f"  pool open after  : {report.total_open_after}")
-    print(f"  ↳ 异常池规模 {report.total_open_before} → {report.total_open_after}  ★")
+    print(f"  ↳ 异常池规模 {res.pool_before} → {res.pool_after}  ★")
     print(f"  new_entities     : {report.new_entities}")
-    print(f"  merged_entities  : {report.merged_entities}")
-    print(f"  new_relations    : {report.new_relations}")
     print(f"  by_event_id:")
     for eid, st in sorted(report.by_event_id.items()):
         print(f"    {eid}: backfilled={st['backfilled']}  failed={st['failed']}")
-
-    # 4) 灌图后状态
-    print(f"\n[graph] 回放后: {g.node_count()} nodes / {g.edge_count()} edges")
-    sched = g.list_nodes_by_type("ScheduledTask")
-    print(f"  ScheduledTask: {len(sched)}")
-    for n in sched[:5]:
-        a = n["attrs"]
-        flag = "✓" if a.get("backfilled") else " "
-        print(f"    [{flag}] {n['node_id']}  task_name={a.get('task_name','?')[:50]}")
-
-    # 5) 落 JSON 报告 + HTML
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    report_path = REPORTS_DIR / f"replay_{ts}.json"
-    report_path.write_text(
-        json.dumps(report.to_dict(), ensure_ascii=False, indent=2,
-                   default=str),
-        encoding="utf-8",
-    )
-    print(f"\n[report] {report_path}")
-
-    render_html(g, HTML_OUT,
-                title=f"AI-OntoSIEM · 回放后图谱 v{onto.version}")
-    print(f"[viz]    {HTML_OUT}")
+    print(f"\n[graph] ScheduledTask 节点: {res.scheduledtask_count}")
+    if res.html_path:
+        print(f"[viz]    {res.html_path}")
     return 0
 
 

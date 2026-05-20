@@ -66,7 +66,7 @@
 
 ## 1:00 - 1:30 · 候选 Parser · 自动生成 + 抽样回放
 
-**画面**：切到子 tab "🔧 候选 Parser"。**预先在录屏前**跑 `python scripts/generate_parser.py`，让候选已经在 store 里 pending。
+**画面**：切到子 tab "🔧 候选 Parser"，点【🤖 生成候选 Parser】按钮（真调 Qwen ~3K，~15 秒），候选当场出现。
 
 **焦点**：候选 parser 卡片，rules 展开 + 🚫 stripped_relations 折叠区。
 
@@ -100,19 +100,15 @@
 
 ## 1:30 - 2:30 · 变更传播 + 回放（核心戏剧时刻）
 
-**画面**：切回浏览器之前的终端（或 split view 终端）。
+**画面**：切到子 tab "🔁 回放与验证"，点【▶ 回放异常池】按钮（~2 秒，无 LLM）。
 
-**操作**：执行 `python scripts/replay_anomaly_pool.py`。
-
-**焦点**：终端输出 ——
+**焦点**：按钮下方三个 metric 当场跳出 ——
 ```
-[pool] 重置 backfilled 标志（32 条全部翻 open）
-[replay] 异常池 32 → 10; 灌图 +31 new entities
-ScheduledTask: 17 个新节点
+异常池规模 10  (Δ -22)    本轮回填 22    ScheduledTask 节点 17
 ```
 
 **解说**：
-> 这一步是组件 10 的核心。看终端：
+> 这一步是组件 10 的核心。点一下按钮：
 >
 > - **异常池规模 32 → 10** ★ 主数字达成
 >   - 22 条 4698 全部成功回放（100%）
@@ -137,66 +133,63 @@ ScheduledTask: 17 个新节点
 
 ## 2:30 - 3:30 · 回放验证 · 演化前后对比
 
-**画面**：终端。
+**画面**：仍在 "🔁 回放与验证" 子 tab。点【🔬 回放重判 + 对比】按钮
+（真调 LLM ~53K，~4 分钟）——**页面出现实时进度条「重判 N/10」**，边讲架构边等。
+跑完再点【🛡 回滚检查】。
 
-**操作**：执行 `python scripts/run_replay_validator.py`（约 70K tokens，~30 秒）。
-
-**焦点**：终端输出 ValidatorReport，重点 verdict_changes。
+**焦点**：进度条跑完后的 diff metric 区 + 回滚提议框。
 
 ```
-=== ValidatorReport ===
-  pool size : 32 → 10  (Δ -22)
-  rejudged  : 9
-    upgraded   : 0
-    downgraded : 1
-    unchanged  : 8
-  semantic_gap : cleared 1 / persisted 5
-  evidence_refs avg : 8.60 → 6.78
+=== ValidatorReport ===   ← 示例；verdict 部分每次跑都可能不同（LLM 非确定性）
+  pool size : 32 → 10  (Δ -22)        ★ 确定性
+  rejudged  : 10
+    upgraded / downgraded / unchanged  ← 随机：本轮 0/0/10，别的轮可能出现降级
+  semantic_gap : cleared 0 / persisted 6   ★ 确定性（4702/5140/5145 还没建模）
+  evidence_refs avg : 8.60 → 7.60
 
-  详细变更:
-    ↓↓ 29a5c7e0  malicious(0.95) → suspicious(0.65)
-        + new ref: Host:HR-WS-01
+=== ⚠️ RollbackProposal · WARNING ===     ★ 每次都触发
+  rationale: semantic_gap 全部持续未清（persisted=6, cleared=0）
 ```
 
 **解说**：
-> 跑完了。脚本拿 v1.0 时代的 10 条老判决和 v1.1 升级图谱后的 9 条新判决做 diff：
+> 脚本拿 v1.0 的 10 条老判决和 v1.1 升级图谱后的新判决做 diff。**确定性的两条**：
 >
-> - 异常池规模 32→10 已得
-> - **8 条 verdict 不变，1 条降级（downgraded）** —— 注意这里 ★
-> - semantic_gap 清掉 1 条（r5-admin-share），还有 5 条持续等下一轮演化
-> - evidence_refs 平均从 8.60 略降到 6.78，新引用了图节点 Host:HR-WS-01
+> - 异常池规模 32→10 —— 演化的显性收益。
+> - semantic_gap 还剩 6 条持续未清（4702 计划任务修改、5140/5145 共享访问还没建模）。
+>   `check_rollback.py` 据此**自动产出一条回滚提议（WARNING）**：演化只解决了一部分，
+>   系统自己知道还没干完，并把"是否回滚"这个决定交还给审核员。
+>
+> verdict 这部分**每次跑不一样**（LLM 非确定性）。这本身就是诚实材料 ——
+> 见下一段怎么讲。
 
 ---
 
-## 3:30 - 4:30 · 主动暴露失败案例（Demo 灵魂段）
+## 3:30 - 4:30 · 演化的真实成本（按当场结果二选一讲）
 
-**画面**：切回浏览器告警研判 tab，选**第二条告警 r1-lsass-memory-dump**（HR-WS-01）。
+**画面**：切回浏览器 🛡️ 告警研判 tab，逐条看重判结果。
 
-**焦点**：中栏 verdict 卡片 —— suspicious(0.65)，但 ATT&CK 是 T1003 LSASS dump。
+**焦点**：找一条高危告警（如 r1-lsass-memory-dump / r6-remote-thread-injection）看 verdict。
 
-**解说**：
-> 这条告警是**今天 demo 的灵魂材料**。
+**解说（看当场 verdict 结果走分支）**：
 >
-> 真值表里，r1 LSASS 内存导出标的是 malicious。v1.0 时代 LLM 也判了 malicious(0.95)。
+> **分支 A —— 如果某条高危被降级了**（例如 LSASS malicious→suspicious）：
+> > 看这条，真值是 malicious，演化后 LLM 却保守化了。为什么？右栏图谱多了
+> > ScheduledTask 节点，LLM"看到这台主机有合法计划任务"反而不敢妄判。
+> > **这是演化的真实代价（R5 分析师信任风险）—— 视野变宽，偶尔过度保守。**
 >
-> 但是 ——
+> **分支 B —— 如果 verdict 全部不变**（像我验证那次）：
+> > 这轮演化没改变任何判决（10 条全 unchanged，高危依旧 malicious）。
+> > **这恰恰说明加节点是"安全的增量"** —— 没引入误降，但也没立刻提升准确率；
+> > 真正的盲区（6 条 semantic_gap）还在，所以系统自己提了回滚预警。
 >
-> 演化升级到 v1.1 后，LLM 重判变成 suspicious(0.65)。**降级了 30 个百分点。**
->
-> 为什么？看右栏图谱片段：HR-WS-01 上多出了 ScheduledTask 节点。
-> LLM 看到"这台主机有合法的计划任务运行"，就把"LSASS dump"也保守化了 ——
-> "我看到更多上下文，反而不敢妄判"。
->
-> 这是 R5 风险（分析师信任）的真实案例：
-> **演化让 LLM 的视野变宽，但偶尔会过度保守。**
->
-> Demo 不需要装"AI 永远更好"，需要装"AI 真实可解释，错误可观测可纠正"。
+> 无论哪个分支，结论一致：**演化不是"自动变好"，而是"可观测、可量化、可回滚"。**
+> Demo 不装"AI 永远更好"，装"每一步代价和盲区都摆在台面上"。
 
-**操作**：在反馈面板写 "LSASS dump 应判 malicious，演化让 AI 过度保守了"，点 👎。
+**操作**：选一条你不认同的研判，反馈框写说明（如"这条应判 malicious"或
+"这次演化没解决核心 gap"），点 👎。
 
 **解说**：
-> 我作为审核员告诉系统："这个降级是错的"。
-> 这条 manual_annotation 信号立即写到 signal_hub。
+> 我作为审核员把判断写回系统。这条 manual_annotation 信号立即落 signal_hub。
 
 ---
 
@@ -204,22 +197,23 @@ ScheduledTask: 17 个新节点
 
 **画面**：切回 "📊 评测看板" tab。
 
-**焦点**：**反馈采纳率 metric 从 0.0% 跳到 11.1% (1/9)** —— 现场跳数字。
+**焦点**：**反馈采纳率 metric 从 0.0% 当场跳起来**（1 / 判决数）—— 现场跳数字。
 
 **解说**：
-> 看顶部反馈采纳率：刚才还是 0.0%，现在是 11.1%。**反馈机制不是装饰** ——
+> 看顶部反馈采纳率：刚才还是 0.0%，现在跳起来了。**反馈机制不是装饰** ——
 > 每一次按钮点击，看板立即统计，反馈数据将驱动下一轮演化（修改提议优先级 / 拒提议入反面样本库）。
 >
 > 总结一下今天演示了什么：
 >
 > 1. **真能跑**：从 Windows 日志（events.duckdb）→ Sigma 告警 → AI 研判 → 知识图谱
->    → 异常池 → 本体演化 → Parser 自动生成 → 回放 → 评测，端到端通。
+>    → 异常池 → 本体演化 → Parser 自动生成 → 回放 → 重判 → 回滚检查，端到端通。
 >
-> 2. **比现状好**：4 个数字可量化 —— 异常池 32→10 是显性收益，准确率 50%→44%
->    是隐性代价，**两数字并列出现就是为了让决策层看到真实代价**。
+> 2. **比现状好、且代价透明**：异常池 32→10 是确定性的显性收益；而 6 条 semantic_gap
+>    持续未清触发了**自动回滚预警**——系统自己量化"还没干完"。verdict 准确率每轮
+>    随 LLM 浮动（有时高危被过度保守降级），**把这个不确定性如实摆出来**才是卖点。
 >
 > 3. **有自我演化能力**：演化机制横切五层，每一层订阅本体变更并响应升级。
->    硬边界 + 反幻觉闸门 + 反面样本库 + 演化前后 diff —— 演化不是黑箱。
+>    硬边界 + 反幻觉闸门 + 反面样本库 + 演化前后 diff + 回滚提议 —— 演化不是黑箱。
 >
 > v1.2 演化（加 schedules 边连接 ScheduledTask 节点 + 第二轮 approve
 > ScheduledTaskModification 把 4702 也清理）将进一步把异常池压到 2 条。
@@ -232,22 +226,30 @@ ScheduledTask: 17 个新节点
 
 ## 后台真实数字附录（用来对答时候核对）
 
-| 指标 | v1.0 | v1.1 |
-|---|---|---|
-| 研判准确率 | 50.0% (5/10) | 44.4% (4/9) |
-| 反馈采纳率 | 0.0% | 0.0% → 11.1%（演示后） |
-| 本体覆盖率 | 99.6% | 99.6% |
-| 异常池规模 | 32 | 10 |
-| ScheduledTask 节点数 | 0 | 17 |
-| 总 LLM token 消耗 | ~2K（提议）+ ~2.7K（候选 parser）+ ~71K（重判）= ~76K |
+> 标 ★ 的是确定性结果，每次跑都一样；其余随 LLM 浮动。
+> 数字来自 2026-05-20 一次完整 P6→P11 验证跑。
+
+| 指标 | v1.0 | v1.1 | 说明 |
+|---|---|---|---|
+| 异常池规模 ★ | 32 | 10 | 22 条 4698 全回填；4702×8 / 5140×1 / 5145×1 留池 |
+| ScheduledTask 节点数 ★ | 0 | 17 | 灌入图谱，带 backfilled=true |
+| semantic_gap persisted ★ | — | 6 | 触发回滚提议 WARNING |
+| 候选 parser stripped 关系 ★ | — | 2 | authenticated_as（幻觉字段）+ executed_on（端点不匹配）|
+| 本体覆盖率 | 99.6% | 99.6% | |
+| 研判准确率 | ~50% | **随 LLM 浮动** | 验证那轮 10 条 verdict 全 unchanged（LSASS 仍 malicious）；别轮可能出现高危被误降 |
+| 反馈采纳率 | 0.0% | 0% → 跳起 | 点 👎 后 = 1/判决数 |
+| 总 LLM token | — | ~56K | 候选 parser ~2.7K + 重判 ~53K |
 
 | 通过的提议 | proposal_id | 触发的本体版本 |
 |---|---|---|
 | ScheduledTask (node) | bae04eee | v1.1 |
 
-| 候选 Parser | candidate_id | 状态 |
-|---|---|---|
-| 4698_scheduled_task_create | 1581021d (示例) | applied |
+| 候选 Parser（每次重跑 candidate_id 都不同） | 状态 |
+|---|---|
+| 4698_scheduled_task_create（target=ScheduledTask）| applied |
+
+> 回滚提议**每次都触发**（semantic_gap 未清），但触发原因可能不同：本轮是
+> "gap 持续未清"；若某轮出现 verdict 净降级，则会额外/改以"verdict 降级"触发。
 
 ---
 

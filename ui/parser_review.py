@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -44,11 +45,10 @@ def render_content() -> None:
     )
 
     svc = _cached_service()
-    store = _cached_store()
-    pool = _cached_pool()
     onto = svc.get_current()
+    view = _load_view()        # 短连接读完即关，不持有 candidate_parsers.duckdb
+    counts = view["counts"]
 
-    counts = store.count_by_status()
     cols = st.columns(4)
     with cols[0]:
         st.metric("当前本体版本", f"v{onto.version}")
@@ -59,26 +59,39 @@ def render_content() -> None:
     with cols[3]:
         st.metric("已拒绝", counts.get("rejected", 0))
 
+    # 生成候选 Parser（基于已通过提议）—— 替代终端 generate_parser.py
+    if st.button("🤖 生成候选 Parser（基于已通过提议 · 真调 LLM ~3K tokens）",
+                 key="btn-gen-candidate"):
+        with st.spinner("LLM 生成候选 parser 中..."):
+            from evolution.pipeline_ops import generate_candidates
+            res = generate_candidates()
+        if res.inserted:
+            st.success(f"✓ 生成 {res.inserted} 条候选 parser")
+        elif res.skipped:
+            st.info("已通过提议都已有 active 候选，未重复生成。")
+        else:
+            st.warning("没有可生成候选的已通过提议；先到「🆕 提议审核」approve。")
+        st.rerun()
+
     st.divider()
 
-    pending = store.list_by_status("pending")
+    pending = view["pending"]
     if not pending:
-        st.success("🎉 当前没有待审核候选。运行 `python scripts/generate_parser.py` 产生新候选。")
-        _render_history(store)
+        st.success("🎉 当前没有待审核候选。点上方【🤖 生成候选 Parser】产生新候选。")
+        _render_history(view["counts"], view["history"])
         return
 
     for row in pending:
-        _render_candidate_card(row, store, pool, onto)
+        _render_candidate_card(row, onto)
 
-    _render_history(store)
+    _render_history(view["counts"], view["history"])
 
 
 # =========================================================
 # 候选卡片
 # =========================================================
 
-def _render_candidate_card(row: dict, store: CandidateParserStore,
-                           pool: AnomalyPool, onto) -> None:
+def _render_candidate_card(row: dict, onto) -> None:
     cid = row["candidate_id"]
     cid_short = cid[:8]
     with st.container(border=True):
@@ -146,7 +159,7 @@ def _render_candidate_card(row: dict, store: CandidateParserStore,
             )
         with preview_cols[1]:
             if st.button("▶ 跑抽样回放", key=f"pre-{cid}"):
-                _run_preview(cid_short, row, n_preview, pool, store, onto)
+                _run_preview(cid_short, row, n_preview, onto)
 
         # 决策按钮
         st.markdown("---")
@@ -154,7 +167,7 @@ def _render_candidate_card(row: dict, store: CandidateParserStore,
         with btn_cols[0]:
             if st.button("✅ Approve & Apply", key=f"app-{cid}", type="primary"):
                 try:
-                    yaml_path = approve_and_apply(store, cid)
+                    yaml_path = _do_approve(cid)
                     st.success(f"已通过 · 写入 {yaml_path.name}")
                     st.rerun()
                 except CandidateNotPending as exc:
@@ -167,32 +180,23 @@ def _render_candidate_card(row: dict, store: CandidateParserStore,
                                    placeholder="如：抽样回放成功率不足；LLM 仍存在幻觉")
                 if st.button("确认拒绝", key=f"rej-{cid}"):
                     try:
-                        reject_candidate(store, cid, reason=rsn or "(无理由)")
+                        _do_reject(cid, reason=rsn or "(无理由)")
                         st.success("已拒绝")
                         st.rerun()
                     except Exception as exc:
                         st.error(str(exc))
 
 
-def _run_preview(cid_short: str, row: dict, n: int,
-                 pool: AnomalyPool, store: CandidateParserStore, onto) -> None:
-    """从异常池取 n 条样本，对候选规则做 dry-run 抽样回放。"""
-    candidate = store.as_candidate(row["candidate_id"])
-    if candidate is None:
+def _run_preview(cid_short: str, row: dict, n: int, onto) -> None:
+    """从异常池取 n 条样本，对候选规则做 dry-run 抽样回放（短连接）。"""
+    report = _do_preview(row["candidate_id"], row.get("source_events"), int(n), onto)
+    if report is None:
         st.error("找不到候选")
         return
-    # 收集样本：source_events 中每个 event_id 取若干
-    samples = []
-    for ev in row["source_events"] or []:
-        eid = ev.get("event_id")
-        if eid is None:
-            continue
-        samples.extend(pool.list_by_event_id(int(eid), limit=int(n)))
-    if not samples:
+    if report.get("_empty"):
         st.warning("异常池没有匹配 source_events 的样本")
         return
 
-    report = preview_candidate_parsing(candidate, samples[:int(n)], ontology=onto)
     st.markdown(f"**抽样回放结果（{cid_short}）**")
     rcols = st.columns(3)
     with rcols[0]:
@@ -221,9 +225,9 @@ def _run_preview(cid_short: str, row: dict, n: int,
 # 历史
 # =========================================================
 
-def _render_history(store: CandidateParserStore) -> None:
+def _render_history(counts: Dict[str, int],
+                    history: Dict[str, list]) -> None:
     st.divider()
-    counts = store.count_by_status()
     st.subheader("历史记录")
     cols = st.columns(2)
     with cols[0]:
@@ -236,7 +240,7 @@ def _render_history(store: CandidateParserStore) -> None:
         ("❌ 已拒绝", "rejected"),
     ]:
         with st.expander(f"{label}（{counts.get(status_key, 0)}）"):
-            for r in store.list_by_status(status_key, limit=50):
+            for r in history.get(status_key, []):
                 with st.container(border=True):
                     st.markdown(
                         f"**{r['target_node_type']}** "
@@ -250,22 +254,72 @@ def _render_history(store: CandidateParserStore) -> None:
 
 
 # =========================================================
-# 缓存（会话级单例）
+# 数据访问（短连接：开→用→关，UI 不持有 duckdb）
+# =========================================================
+
+def _load_view(*, db_path: Optional[Path] = None) -> Dict[str, Any]:
+    store = CandidateParserStore(db_path) if db_path else CandidateParserStore()
+    try:
+        return {
+            "counts": store.count_by_status(),
+            "pending": store.list_by_status("pending"),
+            "history": {
+                k: store.list_by_status(k, limit=50)
+                for k in ("approved", "rejected")
+            },
+        }
+    finally:
+        store.close()
+
+
+def _do_approve(cid: str, *, db_path: Optional[Path] = None) -> Path:
+    store = CandidateParserStore(db_path) if db_path else CandidateParserStore()
+    try:
+        return approve_and_apply(store, cid)
+    finally:
+        store.close()
+
+
+def _do_reject(cid: str, *, reason: str, db_path: Optional[Path] = None) -> None:
+    store = CandidateParserStore(db_path) if db_path else CandidateParserStore()
+    try:
+        reject_candidate(store, cid, reason=reason)
+    finally:
+        store.close()
+
+
+def _do_preview(cid: str, source_events, n: int, onto, *,
+                store_db: Optional[Path] = None,
+                pool_db: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+    """短连接：开 store + pool → 取样 → dry-run → 关。返回 report；
+    候选不存在返回 None；无匹配样本返回 {"_empty": True}。"""
+    store = CandidateParserStore(store_db) if store_db else CandidateParserStore()
+    pool = AnomalyPool(pool_db) if pool_db else AnomalyPool()
+    try:
+        candidate = store.as_candidate(cid)
+        if candidate is None:
+            return None
+        samples = []
+        for ev in source_events or []:
+            eid = ev.get("event_id")
+            if eid is None:
+                continue
+            samples.extend(pool.list_by_event_id(int(eid), limit=int(n)))
+        if not samples:
+            return {"_empty": True}
+        return preview_candidate_parsing(candidate, samples[:int(n)], ontology=onto)
+    finally:
+        pool.close()
+        store.close()
+
+
+# =========================================================
+# 缓存（仅本体服务 —— 无 DuckDB 连接，可安全常驻）
 # =========================================================
 
 @st.cache_resource
 def _cached_service():
     return get_service()
-
-
-@st.cache_resource
-def _cached_store():
-    return CandidateParserStore()
-
-
-@st.cache_resource
-def _cached_pool():
-    return AnomalyPool()
 
 
 if __name__ == "__main__":

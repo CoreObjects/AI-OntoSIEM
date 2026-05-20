@@ -12,12 +12,14 @@
 ## 一句话演示
 
 ```
-异常池 32 → 10                ← 本体 v1.1 加 ScheduledTask 节点 + 回放 4698 事件
-研判准确率 50.0% → 44.4%      ← LSASS dump 被 LLM 错误降级（演化的代价 · 真实可见）
-反馈采纳率 0% → 11.1%         ← 审核员点 👎 触发 manual_annotation 信号回流
+异常池 32 → 10                ← 本体 v1.1 加 ScheduledTask 节点 + 回放 4698 事件（确定性）
+semantic_gap 6 条持续未清     ← 触发自动回滚提议 WARNING（系统自知"还没干完"，确定性）
+研判准确率                    ← 随 LLM 浮动；某些轮高危会被过度保守降级（演化的代价，如实呈现）
+反馈采纳率 0% → 跳起          ← 审核员点 👎 触发 manual_annotation 信号回流
 ```
 
-**Demo 不装"AI 永远更好"，装"演化机制可观测、失败案例可追溯"。**
+**Demo 不装"AI 永远更好"，装"演化机制可观测、代价透明、可回滚"。**
+LLM 重判是非确定性的——把这个不确定性如实摆出来，本身就是这套框架的诚实卖点。
 
 ---
 
@@ -87,15 +89,15 @@ streamlit run ui/main.py
 
 ## 演示脚本（5 分钟）
 
-完整剧本见 [docs/demo_script.md](docs/demo_script.md)。简版动线：
+完整剧本见 [docs/demo_script.md](docs/demo_script.md)。**全程点 UI 按钮，零终端**。简版动线：
 
 1. **0:00** 首页评测看板，4 个核心数字 + 异常池 32 条 → 引出 "演化机制"
-2. **1:00** 演化页提议审核，弹出 ScheduledTask 提议（基于 22 条 4698 信号 + ATT&CK T1053.005）
-3. **1:30** 通过审核 → ontology v1.1 自动生成 → 弹出候选 parser（4698 字段映射）+ 抽样回放 100% 成功率
-4. **2:30** 应用 candidate parser → 跑 `scripts/replay_anomaly_pool.py` → 异常池 32→10，灌入 17 个 ScheduledTask 节点
-5. **3:30** 跑 `scripts/run_replay_validator.py` → diff 报告：LSASS 被错误降级（malicious → suspicious）
-6. **4:30** 主动暴露失败案例 + 现场点 👎 → 反馈采纳率 0% → 11.1% 飞起
-7. **5:00** 收尾：演化 ≠ 自动变好，演化 = **可观测、可追溯、可回滚**
+2. **0:30** 演化页提议审核，点【✅ 通过】ScheduledTask 提议 → 本体 v1.1
+3. **1:00** 候选 Parser 页点【🤖 生成候选 Parser】→ 候选出现（含 2 条被闸门 strip 的关系）→ 抽样回放 → 【Approve & Apply】
+4. **2:30** 回放与验证页点【▶ 回放异常池】→ 异常池 32→10，灌入 17 个 ScheduledTask 节点
+5. **3:30** 点【🔬 回放重判 + 对比】（实时进度条）→ diff；再点【🛡 回滚检查】→ **自动回滚提议 WARNING**
+6. **4:30** 按当场 verdict 结果讲演化代价（高危被误降则讲 R5 风险；全不变则讲"安全增量"）+ 告警研判页点 👎 → 反馈采纳率 0% → 飞起
+7. **5:00** 收尾：演化 ≠ 自动变好，演化 = **可观测、代价透明、可回滚**
 
 ---
 
@@ -103,12 +105,12 @@ streamlit run ui/main.py
 
 | 指标 | 含义 | 当前值（v1.1） |
 |---|---|---|
-| 研判准确率 | LLM verdict vs 人工 ground truth | 44.4% (4/9)¹ |
+| 研判准确率 | LLM verdict vs 人工 ground truth | ~50%，随 LLM 浮动¹ |
 | 反馈采纳率 | manual_annotation 信号 / 判决数 | 0%（演示前）/ ↑ 演示后 |
 | 本体覆盖率 | 成功 parse / (parse + 异常池) | 99.6% |
-| 异常池规模 | 当前未解决的"本体盲区"事件数 | 10（v1.0 时代是 32）|
+| 异常池规模 | 当前未解决的"本体盲区"事件数 | 10（v1.0 时代是 32）★ 确定性 |
 
-¹ v1.0 时代是 50%；v1.1 因为 LLM 看到 ScheduledTask 节点反而把 LSASS dump 从 malicious 降到 suspicious —— 这正是 Demo 主动暴露的失败案例。
+¹ 重判是 LLM 非确定性的：某些轮 LLM 看到新增的 ScheduledTask 节点会把高危告警（如 LSASS dump）过度保守地从 malicious 降到 suspicious，准确率因此下降；另一些轮 verdict 全不变。**不保证每次复现**——Demo 如实呈现这个不确定性，并靠确定性的 semantic_gap 回滚提议兜底叙事。
 
 ---
 
@@ -132,12 +134,12 @@ streamlit run ui/main.py
 ## 测试
 
 ```bash
-.venv/Scripts/python.exe -m pytest                          # 全量（313 测试）
+.venv/Scripts/python.exe -m pytest                          # 全量（333 测试）
 .venv/Scripts/python.exe -m pytest tests/test_X.py -v       # 单文件
 .venv/Scripts/python.exe -m pytest tests/test_X.py::test_fn # 单测
 ```
 
-**项目状态**：313/313 全绿；总 LLM token 消耗约 79K（< 1M Qwen 免费额度的 8%）。
+**项目状态**：333/333 全绿。
 
 ---
 
@@ -154,8 +156,8 @@ streamlit run ui/main.py
 
 ## 当前限制 / 未来工作
 
-- **回滚机制（组件 10 Day 5）暂搁置**：指标恶化（如 LSASS 误降）目前需要人工 reject 提议；自动回滚 + 全管线脚本待补。
-- **第二轮演化**：4702 / 5140 / 5145 仍在异常池；下一轮 approve ScheduledTaskModification 提议可清理 4702。
+- **回滚是"提议"而非"自动执行"**：`check_rollback.py` 会在指标恶化（verdict 净降级 / semantic_gap 持续未清）时自动产出 RollbackProposal，但**从不自动回滚**——撤销 v1.1 仍需人工删 yaml + 重启（R8 缓解：避免演化空转又避免误自动回滚）。
+- **第二轮演化**：4702 / 5140 / 5145 仍在异常池（6 条 semantic_gap）；下一轮 approve ScheduledTaskModification 提议可清理 4702。
 - **生产化**：当前是单租户 demo，多租户隔离 / RBAC / 审计日志 / 多 LLM 后端切换属于 Phase 5 工作。
 
 ---

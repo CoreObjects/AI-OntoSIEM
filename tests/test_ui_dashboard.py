@@ -1,6 +1,14 @@
 """阶段 4 A 段：评测看板 UI smoke test。"""
 from __future__ import annotations
 
+import subprocess
+import sys
+
+
+def _external_open_ok(db) -> bool:
+    code = "import duckdb,sys;c=duckdb.connect(sys.argv[1]);c.close()"
+    return subprocess.run([sys.executable, "-c", code, str(db)]).returncode == 0
+
 
 def test_ui_module_imports_cleanly() -> None:
     import ui.dashboard as d
@@ -51,3 +59,23 @@ def test_load_signals_coexists_with_open_writer_hub(tmp_path, monkeypatch) -> No
     assert len(fb) == 1
     assert fb[0]["payload"].get("feedback") == "up"
     assert fb[0]["source_layer"] == "copilot"
+
+
+def test_load_signals_releases_lock(tmp_path, monkeypatch) -> None:
+    """看板读 signals 走短连接：读完不应再持有 signals.duckdb 锁。"""
+    import ui.dashboard as dash
+    from evolution.signal_hub import SignalHub
+
+    db = tmp_path / "signals.duckdb"
+    hub = SignalHub(db)
+    hub.report_signal(
+        "copilot", "manual_annotation",
+        {"feedback": "up", "judgment_id": "j"},
+        aggregation_key="copilot:manual_annotation:up",
+    )
+    hub.close()  # 不持有
+
+    monkeypatch.setattr(dash, "SIGNALS_DB", db)
+    sigs = dash._load_signals()
+    assert any(s["signal_type"] == "manual_annotation" for s in sigs)
+    assert _external_open_ok(db), "读取后仍持有 signals.duckdb 锁"

@@ -31,7 +31,7 @@ import streamlit as st     # noqa: E402
 from evolution.metrics import (         # noqa: E402
     MetricsSnapshot, collect_metrics, load_ground_truth,
 )
-from evolution.signal_hub import get_hub              # noqa: E402
+from evolution.signal_hub import SignalHub            # noqa: E402
 from storage.anomaly_pool import AnomalyPool          # noqa: E402
 from storage.judgment_store import JudgmentStore      # noqa: E402
 
@@ -281,18 +281,20 @@ def _load_alerts() -> List[Dict[str, Any]]:
 
 
 def _load_signals() -> List[Dict[str, Any]]:
-    """读 signals.duckdb。
+    """读 signals.duckdb（短连接：开→读→关）。
 
-    必须经由 signal_hub 的单例连接 —— 告警研判页的 get_hub() 对同一文件持有
-    读写连接并常驻整个进程，这里若另开 read_only 连接会触发 DuckDB
-    "同进程同文件配置不一致" 冲突（main.py 三页签同进程整合后的真实 bug）。
+    UI 全程不持有任何 DuckDB 连接，否则 streamlit 进程会锁死 signals.duckdb，
+    令终端脚本（如 run_replay_validator 经 get_hub 写信号）撞跨进程锁。
     """
     if not SIGNALS_DB.exists():
         return []
+    hub = SignalHub(SIGNALS_DB)
     try:
-        recent = get_hub().list_recent(limit=100000)
+        recent = hub.list_recent(limit=100000)
     except Exception:
         return []
+    finally:
+        hub.close()
     out = []
     for s in recent:
         payload = s.get("payload")

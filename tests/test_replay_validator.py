@@ -62,6 +62,29 @@ def _new(alert_id: str, verdict: str, conf: float, *,
 # Dataclass schema
 # =========================================================
 
+def test_rejudge_alerts_calls_progress_cb_per_alert() -> None:
+    """progress_cb 每条 alert 回调一次，喂 UI 进度条。"""
+    from evolution.replay_validator import rejudge_alerts
+
+    class _A:
+        def __init__(self, aid):
+            self.alert_id = aid
+            self.rule_id = "r-" + aid
+
+    class _Engine:
+        def judge(self, a):
+            return _new(a.alert_id, "suspicious", 0.65)
+
+    alerts = [_A("a1"), _A("a2"), _A("a3")]
+    seen = []
+    out = rejudge_alerts(_Engine(), alerts,
+                         progress_cb=lambda i, n, a, j: seen.append((i, n, a.alert_id, j.verdict)))
+    assert len(out) == 3
+    assert seen == [(1, 3, "a1", "suspicious"),
+                    (2, 3, "a2", "suspicious"),
+                    (3, 3, "a3", "suspicious")]
+
+
 def test_validator_report_dataclass_fields() -> None:
     from evolution.replay_validator import ValidatorReport
     r = ValidatorReport(

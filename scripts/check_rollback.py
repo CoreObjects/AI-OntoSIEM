@@ -20,62 +20,20 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from evolution.replay_validator import ValidatorReport      # noqa: E402
-from evolution.rollback_proposer import assess_for_rollback  # noqa: E402
-
-REPORTS_DIR = ROOT / "data" / "replay_reports"
-
-
-def _load_report(path: Path) -> ValidatorReport:
-    data = json.loads(path.read_text(encoding="utf-8"))
-    return ValidatorReport(
-        started_at=data.get("started_at", ""),
-        finished_at=data.get("finished_at", ""),
-        ontology_version_before=data.get("ontology_version_before", ""),
-        ontology_version_after=data.get("ontology_version_after", ""),
-        pool_open_before=int(data.get("pool_open_before", 0)),
-        pool_open_after=int(data.get("pool_open_after", 0)),
-        rejudged_count=int(data.get("rejudged_count", 0)),
-        verdict_changes=[],   # 摘要不需要逐条
-        verdict_unchanged=int(data.get("verdict_unchanged", 0)),
-        verdict_upgraded=int(data.get("verdict_upgraded", 0)),
-        verdict_downgraded=int(data.get("verdict_downgraded", 0)),
-        semantic_gap_cleared=int(data.get("semantic_gap_cleared", 0)),
-        semantic_gap_persisted=int(data.get("semantic_gap_persisted", 0)),
-        avg_evidence_refs_before=float(data.get("avg_evidence_refs_before", 0.0)),
-        avg_evidence_refs_after=float(data.get("avg_evidence_refs_after", 0.0)),
-    )
+from evolution.pipeline_ops import REPORTS_DIR, latest_rollback_assessment  # noqa: E402
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--report", type=Path, default=None,
-                    help="ValidatorReport JSON 路径（默认取最新）")
     ap.add_argument("--min-rejudged", type=int, default=5)
     args = ap.parse_args()
 
-    if args.report:
-        path = args.report
-    else:
-        files = sorted(REPORTS_DIR.glob("validator_*.json"))
-        if not files:
-            print("ERROR: 没找到 validator 报告。先跑 scripts/run_replay_validator.py。")
-            return 1
-        path = files[-1]
+    proposal = latest_rollback_assessment(reports_dir=REPORTS_DIR,
+                                          require_min_rejudged=args.min_rejudged)
+    if not REPORTS_DIR.exists() or not list(REPORTS_DIR.glob("validator_*.json")):
+        print("ERROR: 没找到 validator 报告。先跑 scripts/run_replay_validator.py。")
+        return 1
 
-    print(f"[input] {path}")
-    report = _load_report(path)
-    print(f"[metrics] v{report.ontology_version_before} → v{report.ontology_version_after}")
-    print(f"  rejudged: {report.rejudged_count}")
-    print(f"  verdict:  upgraded={report.verdict_upgraded}  "
-          f"downgraded={report.verdict_downgraded}  "
-          f"unchanged={report.verdict_unchanged}")
-    print(f"  semantic_gap: cleared={report.semantic_gap_cleared}  "
-          f"persisted={report.semantic_gap_persisted}")
-    print(f"  avg_refs: {report.avg_evidence_refs_before:.2f} → "
-          f"{report.avg_evidence_refs_after:.2f}")
-
-    proposal = assess_for_rollback(report, require_min_rejudged=args.min_rejudged)
     if proposal is None:
         print("\n[OK] 不触发回滚（指标无显著恶化）。")
         return 0

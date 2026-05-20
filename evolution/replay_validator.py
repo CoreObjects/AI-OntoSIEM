@@ -227,14 +227,23 @@ def compare_judgments(
 # 重判（脚本用 — 调真 LLM）
 # =========================================================
 
-def rejudge_alerts(engine, alerts) -> List[Judgment]:
-    """对每个 Alert 跑 engine.judge() 并收集结果。"""
+def rejudge_alerts(engine, alerts, *, progress_cb=None) -> List[Judgment]:
+    """对每个 Alert 跑 engine.judge() 并收集结果。
+
+    progress_cb(i, total, alert, judgment) 每条 alert 调用一次（失败时 judgment=None），
+    供 UI 实时进度条使用。
+    """
     out: List[Judgment] = []
-    for a in alerts:
+    total = len(alerts)
+    for i, a in enumerate(alerts, 1):
+        j = None
         try:
-            out.append(engine.judge(a))
+            j = engine.judge(a)
+            out.append(j)
         except Exception:
             logger.exception("rejudge failed for alert %s", getattr(a, "alert_id", "?"))
+        if progress_cb is not None:
+            progress_cb(i, total, a, j)
     return out
 
 

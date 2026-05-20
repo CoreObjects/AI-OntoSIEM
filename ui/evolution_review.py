@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -43,12 +44,11 @@ def render_content() -> None:
     st.title("📐 本体演化提议审核")
 
     svc = _cached_service()
-    store = _cached_store()
-    upgrader = OntologyUpgrader(ontology_dir=ROOT / "ontology", service=svc)
+    onto = svc.get_current()
+    view = _load_view()        # 短连接读完即关，不持有 proposals.duckdb
+    status = view["backlog"]
 
     # 顶部：积压告警 + 当前本体版本
-    onto = svc.get_current()
-    status = backlog_status(store)
     cols = st.columns(4)
     with cols[0]:
         st.metric("当前本体版本", f"v{onto.version}")
@@ -67,23 +67,23 @@ def render_content() -> None:
     st.divider()
 
     # pending 列表
-    pending = store.list_by_status("pending")
+    pending = view["pending"]
     if not pending:
         st.success("🎉 当前没有待审核提议。运行 `python scripts/run_proposals.py` 产生新提议。")
-        _render_history(store)
+        _render_history(view["counts"], view["history"])
         return
 
     for row in pending:
-        _render_card(row, store, upgrader)
+        _render_card(row)
 
-    _render_history(store)
+    _render_history(view["counts"], view["history"])
 
 
 # =========================================================
 # 卡片渲染
 # =========================================================
 
-def _render_card(row: dict, store: ProposalStore, upgrader: OntologyUpgrader) -> None:
+def _render_card(row: dict) -> None:
     pid = row["proposal_id"]
     with st.container(border=True):
         title_cols = st.columns([1, 3, 1])
@@ -139,7 +139,7 @@ def _render_card(row: dict, store: ProposalStore, upgrader: OntologyUpgrader) ->
                         hints["edge_endpoints"] = {"from": edge_from, "to": edge_to}
                     elif row["proposal_type"] == "attr":
                         hints["attr_target_node"] = attr_target
-                    new_path = approve_and_upgrade(store, pid, upgrader, **hints)
+                    new_path = _do_approve(pid, **hints)
                     st.success(f"已通过 · 本体升级到 {new_path.name}")
                     st.rerun()
                 except Exception as exc:
@@ -158,9 +158,8 @@ def _render_card(row: dict, store: ProposalStore, upgrader: OntologyUpgrader) ->
                             hints["edge_endpoints"] = {"from": edge_from, "to": edge_to}
                         elif row["proposal_type"] == "attr":
                             hints["attr_target_node"] = attr_target
-                        new_path = modify_and_upgrade(
-                            store, pid, upgrader,
-                            new_name=new_name, new_definition=new_def, **hints,
+                        new_path = _do_modify(
+                            pid, new_name=new_name, new_definition=new_def, **hints,
                         )
                         st.success(f"修改后通过 · 本体升级到 {new_path.name}")
                         st.rerun()
@@ -172,7 +171,7 @@ def _render_card(row: dict, store: ProposalStore, upgrader: OntologyUpgrader) ->
                 rsn = st.text_area("拒绝理由", key=f"rr-{pid}")
                 if st.button("确认拒绝", key=f"rsub-{pid}"):
                     try:
-                        reject(store, pid, reason=rsn or "(无理由)")
+                        _do_reject(pid, reason=rsn or "(无理由)")
                         st.success("已拒绝，入反面样本库")
                         st.rerun()
                     except Exception as exc:
@@ -182,7 +181,7 @@ def _render_card(row: dict, store: ProposalStore, upgrader: OntologyUpgrader) ->
             if st.button(f"⏳ 延后 (当前 {row.get('defer_count', 0)}/2)",
                          key=f"defer-{pid}"):
                 try:
-                    res = defer(store, pid, max_cycles=2)
+                    res = _do_defer(pid, max_cycles=2)
                     if res["status"] == "rejected":
                         st.warning(f"已达延后上限 · 自动拒绝（defer_count={res['defer_count']}）")
                     else:
@@ -196,9 +195,9 @@ def _render_card(row: dict, store: ProposalStore, upgrader: OntologyUpgrader) ->
 # 历史记录展示
 # =========================================================
 
-def _render_history(store: ProposalStore) -> None:
+def _render_history(counts: Dict[str, int],
+                    history: Dict[str, list]) -> None:
     st.divider()
-    counts = store.count_by_status()
     st.subheader("历史记录")
     hc = st.columns(4)
     with hc[0]:
@@ -217,7 +216,7 @@ def _render_history(store: ProposalStore) -> None:
         ("⏳ 延后", "deferred"),
     ]:
         with st.expander(f"{status_label}（{counts.get(status_key, 0)}）"):
-            for r in store.list_by_status(status_key, limit=50):
+            for r in history.get(status_key, []):
                 with st.container(border=True):
                     st.markdown(f"**{r['name']}** ({r['proposal_type']}) · "
                                 f"{r.get('rejection_reason') or ''}")
@@ -225,17 +224,84 @@ def _render_history(store: ProposalStore) -> None:
 
 
 # =========================================================
-# 缓存 helper（Streamlit 会话级单例）
+# 数据访问（短连接：开→用→关，UI 不持有 proposals.duckdb）
+# =========================================================
+
+def _open_store(db_path: Optional[Path] = None) -> ProposalStore:
+    return ProposalStore(db_path) if db_path else ProposalStore()
+
+
+def _load_view(*, db_path: Optional[Path] = None) -> Dict[str, Any]:
+    """一次性读出渲染需要的全部提议数据，读完即关连接。"""
+    store = _open_store(db_path)
+    try:
+        return {
+            "backlog": backlog_status(store),
+            "pending": store.list_by_status("pending"),
+            "counts": store.count_by_status(),
+            "history": {
+                k: store.list_by_status(k, limit=50)
+                for k in ("approved", "modified", "rejected", "deferred")
+            },
+        }
+    finally:
+        store.close()
+
+
+def _do_approve(pid: str, *, edge_endpoints=None, attr_target_node=None,
+                db_path: Optional[Path] = None) -> Path:
+    svc = _cached_service()
+    store = _open_store(db_path)
+    try:
+        upgrader = OntologyUpgrader(ontology_dir=ROOT / "ontology", service=svc)
+        return approve_and_upgrade(
+            store, pid, upgrader,
+            edge_endpoints=edge_endpoints, attr_target_node=attr_target_node,
+        )
+    finally:
+        store.close()
+
+
+def _do_modify(pid: str, *, new_name: str, new_definition: str,
+               edge_endpoints=None, attr_target_node=None,
+               db_path: Optional[Path] = None) -> Path:
+    svc = _cached_service()
+    store = _open_store(db_path)
+    try:
+        upgrader = OntologyUpgrader(ontology_dir=ROOT / "ontology", service=svc)
+        return modify_and_upgrade(
+            store, pid, upgrader,
+            new_name=new_name, new_definition=new_definition,
+            edge_endpoints=edge_endpoints, attr_target_node=attr_target_node,
+        )
+    finally:
+        store.close()
+
+
+def _do_reject(pid: str, *, reason: str, db_path: Optional[Path] = None) -> None:
+    store = _open_store(db_path)
+    try:
+        reject(store, pid, reason=reason)
+    finally:
+        store.close()
+
+
+def _do_defer(pid: str, *, max_cycles: int = 2,
+              db_path: Optional[Path] = None) -> Dict[str, Any]:
+    store = _open_store(db_path)
+    try:
+        return defer(store, pid, max_cycles=max_cycles)
+    finally:
+        store.close()
+
+
+# =========================================================
+# 缓存 helper（仅本体服务 —— 无 DuckDB 连接，可安全常驻）
 # =========================================================
 
 @st.cache_resource
 def _cached_service():
     return get_service()
-
-
-@st.cache_resource
-def _cached_store():
-    return ProposalStore()
 
 
 # Streamlit 通过 `streamlit run ui/evolution_review.py` 把脚本作为 __main__ 执行

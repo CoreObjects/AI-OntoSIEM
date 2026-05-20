@@ -78,9 +78,10 @@ def main() -> None:
 # =========================================================
 
 def _render_evolution_tab() -> None:
-    sub_proposal, sub_parser, sub_history = st.tabs([
+    sub_proposal, sub_parser, sub_replay, sub_history = st.tabs([
         "🆕 提议审核",
         "🔧 候选 Parser",
+        "🔁 回放与验证",
         "📜 版本历史",
     ])
 
@@ -91,6 +92,10 @@ def _render_evolution_tab() -> None:
     with sub_parser:
         from ui.parser_review import render_content as r_parser
         r_parser()
+
+    with sub_replay:
+        from ui.replay_review import render_content as r_replay
+        r_replay()
 
     with sub_history:
         _render_version_history()

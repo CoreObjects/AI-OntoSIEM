@@ -41,80 +41,21 @@ def _event_ids_from_signals(signals: list[str]) -> list[int]:
 
 
 def main() -> int:
-    svc = get_service()
-    onto = svc.get_current()
-    print(f"[onto] v{onto.version}  nodes={len(onto.nodes)}  edges={len(onto.edges)}")
+    from evolution.pipeline_ops import generate_candidates
+    from reasoning.llm_client import get_client
 
-    store = ProposalStore()
-    approved = store.list_by_status("approved")
-    if not approved:
-        print("[STOP] 没有 approved 提议；先跑 Streamlit UI 审批，或手动 approve。")
-        return 1
-
-    pool = AnomalyPool()
-    candidate_store = CandidateParserStore()
-    cfg = ParserConfig.load_all([MAPPINGS_DIR])
     llm = get_client()
-    gen = ParserGenerator(llm=llm, ontology=onto)
+    res = generate_candidates(llm=llm)  # 服务层：CLI 与 UI 共用
 
-    n_ok = n_drop = n_skip = 0
-    for row in approved:
-        proposal = store.as_proposal(row["proposal_id"])
-        if proposal is None:
-            continue
-
-        # 已有同 proposal 的 pending 或 approved 候选 → 跳过（避免重复花 token）
-        existing = candidate_store.list_by_proposal(proposal.proposal_id)
-        active = [r for r in existing if r["status"] in ("pending", "approved")]
-        if active:
-            print(f"  - skip {proposal.name}: 已存在 {len(active)} 条 active 候选")
-            n_skip += 1
-            continue
-
-        # 收集 event_id → anomaly 样本
-        event_ids = _event_ids_from_signals(proposal.source_signals)
-        if not event_ids:
-            print(f"  - skip {proposal.name}: source_signals 没 event_id 后缀")
-            continue
-        samples: list[dict] = []
-        for eid in event_ids:
-            samples.extend(pool.list_by_event_id(eid, limit=10))
-        if not samples:
-            print(f"  - skip {proposal.name}: 异常池没有 event_id={event_ids} 的样本")
-            continue
-
-        print(f"\n[generate] {proposal.name}  ({proposal.proposal_type})  "
-              f"events={event_ids}  samples={len(samples)}")
-        candidate = gen.generate(
-            approved_proposal=proposal,
-            anomaly_samples=samples,
-            current_parser_config=cfg,
-        )
-        if candidate is None:
-            print(f"  ❌ 闸门 reject")
-            n_drop += 1
-            continue
-
-        candidate_store.insert(candidate)
-        n_ok += 1
-        print(f"  [OK] candidate {candidate.candidate_id[:8]}  status=pending  "
-              f"conf={candidate.confidence}  rules={len(candidate.rules)}  "
-              f"stripped_rels={len(candidate.stripped_relations)}")
-        for r in candidate.rules:
-            ents = [e.get("ref_name") or e["node"] for e in r.get("entities") or []]
-            rels = [f"{rel['edge']}:{rel['from_ref']}->{rel['to_ref']}"
-                    for rel in r.get("relations") or []]
-            print(f"     - {r['name']}  entities={ents}  rels={rels}")
-        for s in candidate.stripped_relations:
-            print(f"     - [STRIP] {s['edge']}: {s.get('from_ref')}->{s.get('to_ref')}")
-            print(f"              {s['reason']}")
-
+    for d in res.details:
+        print(f"  - {d}")
     u = llm.usage
-    print(f"\n[LLM] calls={u.calls}  prompt={u.prompt_tokens}  "
-          f"completion={u.completion_tokens}  total={u.total_tokens}")
-    print(f"[summary] {n_ok} new candidates inserted, {n_drop} dropped, {n_skip} skipped")
-    print(f"          total in store: {candidate_store.count()}  "
-          f"by status: {candidate_store.count_by_status()}")
+    print(f"\n[LLM] calls={u.calls}  total={u.total_tokens}")
+    print(f"[summary] inserted={res.inserted}  dropped={res.dropped}  "
+          f"skipped={res.skipped}")
+    if res.inserted == 0 and res.skipped == 0 and res.dropped == 0:
+        print("[STOP] 没有可生成候选的 approved 提议；先在 UI 演化页 approve。")
+        return 1
     return 0
 
 

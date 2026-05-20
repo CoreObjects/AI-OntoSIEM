@@ -32,7 +32,7 @@ import streamlit as st     # noqa: E402
 
 from core.ontology_service import get_service                # noqa: E402
 from evolution.feedback import record_feedback               # noqa: E402
-from evolution.signal_hub import get_hub                     # noqa: E402
+from evolution.signal_hub import SignalHub                   # noqa: E402
 from graph.cmdb_loader import load_cmdb                      # noqa: E402
 from graph.importer import import_parsed_db                  # noqa: E402
 from graph.store import GraphStore                           # noqa: E402
@@ -42,6 +42,7 @@ ALERTS_DB = ROOT / "data" / "alerts.duckdb"
 PARSED_DB = ROOT / "data" / "parsed_events.duckdb"
 JUDGMENTS_DB = ROOT / "data" / "judgments.duckdb"
 JUDGMENTS_AFTER_DB = ROOT / "data" / "judgments_after_replay.duckdb"
+SIGNALS_DB = ROOT / "data" / "signals.duckdb"
 CMDB_FILE = ROOT / "ontology" / "cmdb.yaml"
 
 
@@ -63,6 +64,11 @@ def render_content() -> None:
         "左：告警列表 / 中：AI 研判 + 推理链 + 证据回指 / 右：相关图谱片段。"
         "底部 👍/👎 触发 manual_annotation 信号回流到看板。"
     )
+
+    # 演化（回放）后图谱会变；图谱是 cache_resource，需手动重建才能看到新节点
+    if st.button("🔄 重建图谱（演化/回放后点这个刷新孤岛节点）", key="rebuild-graph"):
+        _cached_graph.clear()
+        st.rerun()
 
     alerts = _load_alerts()
     if not alerts:
@@ -284,7 +290,6 @@ def _render_feedback_panel(alert: Optional[Dict[str, Any]],
         placeholder="如：LSASS dump 应该判 malicious，AI 过度保守了",
     )
     cols = st.columns(4)
-    hub = _cached_hub()
     jid = judgment.get("judgment_id") or ""
     aid = alert.get("alert_id") or ""
 
@@ -292,9 +297,8 @@ def _render_feedback_panel(alert: Optional[Dict[str, Any]],
         if st.button("👍 同意", key=f"thumbs-up-{jid}", type="primary",
                      use_container_width=True):
             try:
-                record_feedback(hub, judgment_id=jid, feedback="up",
-                                alert_id=aid,
-                                notes=notes or None)
+                _record_feedback_transient(judgment_id=jid, feedback="up",
+                                           alert_id=aid, notes=notes or None)
                 st.success("✓ 反馈已写入 manual_annotation 信号（看板会立即统计）")
             except Exception as exc:
                 st.error(f"反馈失败：{exc}")
@@ -302,9 +306,8 @@ def _render_feedback_panel(alert: Optional[Dict[str, Any]],
         if st.button("👎 不同意", key=f"thumbs-down-{jid}",
                      use_container_width=True):
             try:
-                record_feedback(hub, judgment_id=jid, feedback="down",
-                                alert_id=aid,
-                                notes=notes or None)
+                _record_feedback_transient(judgment_id=jid, feedback="down",
+                                           alert_id=aid, notes=notes or None)
                 st.success("✓ 反馈已写入（拒判已统计到 reject 路径）")
             except Exception as exc:
                 st.error(f"反馈失败：{exc}")
@@ -425,9 +428,21 @@ def _cached_graph() -> Optional[GraphStore]:
     return g
 
 
-@st.cache_resource
-def _cached_hub():
-    return get_hub()
+def _record_feedback_transient(*, judgment_id: str, feedback: str,
+                               alert_id: Optional[str] = None,
+                               notes: Optional[str] = None,
+                               db_path: Optional[Path] = None):
+    """短连接写反馈信号：开 SignalHub → 写 → 关。
+
+    UI 不持有 signals.duckdb，否则 run_replay_validator（经 get_hub 写信号）
+    会撞跨进程锁。
+    """
+    hub = SignalHub(db_path) if db_path else SignalHub(SIGNALS_DB)
+    try:
+        return record_feedback(hub, judgment_id=judgment_id, feedback=feedback,
+                               alert_id=alert_id, notes=notes)
+    finally:
+        hub.close()
 
 
 if __name__ == "__main__":
