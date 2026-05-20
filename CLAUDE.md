@@ -101,13 +101,3 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
   ```
 - 终端不认 emoji（✅/⏳ 等），脚本用 `[DONE]` / `[TODO]` 等 ASCII 替代
 - `git add` 会提示 LF→CRLF 转换 warning，不影响
-
-## Gitignored 的本地状态
-
-`.env`（Qwen API key）、`.venv/`、`.claude/`（本地权限）、`data/*.duckdb`（所有生成的数据库）、`graph/*.html`（pyvis 产出）、`ontology/v1.*.yaml`（演化新增版本；v1.0.yaml 保留）、`~$*`（Office 锁文件）都不入仓。
-
-跑管线产生的 duckdb 状态会跨会话保留（不在 git 里但在磁盘上），所以"接着昨天"直接跑下一环节即可。
-
-## 当前进度锚点
-
-截至最近提交，阶段 0/1/2 已完成，阶段 3 组件 8+9 完成。**下一步是组件 10**（阶段 3 收官，全项目最高风险）：LLM 基于 approved 提议 + anomaly_pool 样本 → 自动生成新 parser YAML → 异常池回放 → 订阅者联动 → diff 报告。详细起手清单见 `progress.md` 最新会话条目的"下一阶段"段落。
