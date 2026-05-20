@@ -31,6 +31,7 @@ import streamlit as st     # noqa: E402
 from evolution.metrics import (         # noqa: E402
     MetricsSnapshot, collect_metrics, load_ground_truth,
 )
+from evolution.signal_hub import get_hub              # noqa: E402
 from storage.anomaly_pool import AnomalyPool          # noqa: E402
 from storage.judgment_store import JudgmentStore      # noqa: E402
 
@@ -280,28 +281,31 @@ def _load_alerts() -> List[Dict[str, Any]]:
 
 
 def _load_signals() -> List[Dict[str, Any]]:
+    """读 signals.duckdb。
+
+    必须经由 signal_hub 的单例连接 —— 告警研判页的 get_hub() 对同一文件持有
+    读写连接并常驻整个进程，这里若另开 read_only 连接会触发 DuckDB
+    "同进程同文件配置不一致" 冲突（main.py 三页签同进程整合后的真实 bug）。
+    """
     if not SIGNALS_DB.exists():
         return []
-    con = duckdb.connect(str(SIGNALS_DB), read_only=True)
     try:
-        rows = con.execute(
-            "SELECT signal_type, payload, source_layer, priority FROM signals"
-        ).fetchall()
-    except duckdb.CatalogException:
-        con.close()
+        recent = get_hub().list_recent(limit=100000)
+    except Exception:
         return []
-    con.close()
     out = []
-    for r in rows:
-        payload = r[1]
+    for s in recent:
+        payload = s.get("payload")
         if isinstance(payload, str):
             try:
                 payload = json.loads(payload)
             except json.JSONDecodeError:
                 payload = {}
         out.append({
-            "signal_type": r[0], "payload": payload or {},
-            "source_layer": r[2], "priority": r[3],
+            "signal_type": s.get("signal_type"),
+            "payload": payload or {},
+            "source_layer": s.get("source_layer"),
+            "priority": s.get("priority"),
         })
     return out
 
